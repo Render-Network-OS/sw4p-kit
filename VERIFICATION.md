@@ -1,28 +1,24 @@
-# Verification run — 2026-05-11T14:49:16Z
-Commit: 6906fb5346595da9815e2501c50dde5924f2399d
+# Verification run — 2026-05-11T15:21:29Z
+Commit: ea80282a65594723b94f32304795323235751b8e
 Branch: main
 
 ## tsc --noEmit
 ✓ exit 0
 
-## vitest run (unit)
- ✓ src/__tests__/intents/builder.test.ts (2 tests) 2ms
- ✓ src/__tests__/mcp/tools/settle.test.ts (2 tests) 2ms
+## vitest run (unit + e2e)
 
- Test Files  15 passed (15)
-      Tests  42 passed (42)
-   Start at  09:49:19
-   Duration  1.07s (transform 446ms, setup 0ms, collect 1.02s, tests 64ms, environment 2ms, prepare 1.63s)
+ Test Files  21 passed (21)
+      Tests  69 passed (69)
+   Start at  10:21:32
+   Duration  1.16s (transform 589ms, setup 0ms, collect 1.66s, tests 153ms, environment 3ms, prepare 1.76s)
 
 
 ## test:smoke (no env — skipped)
- ↓ smoke/mainnet-canary.test.ts (1 test | 1 skipped)
- ↓ smoke/staging.test.ts (1 test | 1 skipped)
 
  Test Files  2 skipped (2)
       Tests  2 skipped (2)
-   Start at  09:49:21
-   Duration  526ms (transform 109ms, setup 0ms, collect 161ms, tests 0ms, environment 0ms, prepare 142ms)
+   Start at  10:21:33
+   Duration  412ms (transform 99ms, setup 0ms, collect 153ms, tests 0ms, environment 0ms, prepare 79ms)
 
 
 ## build

@@ -14,12 +14,19 @@ npm install @sw4p/kit
 
 | Import | What it does |
 |---|---|
-| `@sw4p/kit/core` | `SettlementClient`, gasless helper, error taxonomy, canonical `Intent` type |
-| `@sw4p/kit/mcp` | MCP server exposing `sw4p.settle`, `sw4p.estimate`, `sw4p.status`, `sw4p.portfolio`, `sw4p.rebalance_plan`, `sw4p.rebalance_execute` |
-| `@sw4p/kit/x402` | HTTP middleware and client for x402 payment-gated endpoints |
+| `@sw4p/kit/core` | `SettlementClient`, gasless helper (Kora 2.0 with Token-2022 + signer types + policy hooks), error taxonomy, `Intent`, `TaskStore` |
+| `@sw4p/kit/mcp` | MCP 2025-11-25 server exposing `sw4p.{estimate,settle,status,portfolio,rebalance_plan,rebalance_execute,task}` plus `sw4p.ap2.{cart_propose,cart_execute}` when a signer is configured |
+| `@sw4p/kit/x402` | x402 **V2** middleware (multi-network `accepts`), Discovery handler for Bazaar/x402scan crawlers, pay-then-retry client |
 | `@sw4p/kit/a2a` | A2A message types and handler for cross-agent payment requests |
-| `@sw4p/kit/ap2` | `BudgetGuard` for AP2 budget enforcement before settlement |
+| `@sw4p/kit/ap2` | **AP2 Intent + Cart Mandates** with deep-canonical JSON signing, HMAC signer reference impl, `BudgetGuard` for spend caps |
 | `@sw4p/kit/intents` | ERC-7683 intent builder |
+
+## Frontier alignment (May 2026)
+
+- **MCP spec 2025-11-25** — Tasks primitive via `TaskStore` and `sw4p.task`; long-running `settle`/`rebalance_execute` return a `taskId` with `async: true`
+- **x402 V2** — multi-network `accepts`, `.well-known` Discovery, `X-Payment`/`X-Sw4p-Payment` header aliases, `X-Sw4p-Settlement` response correlation
+- **AP2 Cart Mandates** — `cart_propose` returns a signable Cart Mandate, `cart_execute` verifies + settles. **No official Google TS AP2 SDK exists — this is a frontier implementation.**
+- **Kora 2.0** — `KoraLike` accepts `signerType` (turnkey/privy/local/kms/external), Token-2022 extension filter, policy passthrough
 
 ## Quickstart — MCP
 
