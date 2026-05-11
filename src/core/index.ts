@@ -6,3 +6,5 @@ export { SettlementClient } from "./client.js";
 export type { SdkLike, SettlementClientOptions, EstimateResult, SettleResult } from "./client.js";
 export { sponsorAndSubmit, _resetIdempotencyCache } from "./gasless.js";
 export type { KoraLike, SponsorOptions } from "./gasless.js";
+export { TaskStore } from "./task.js";
+export type { Task, TaskStatus, TaskProgress, RunContext } from "./task.js";

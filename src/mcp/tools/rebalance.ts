@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { SettlementClient } from "../../core/client.js";
+import type { TaskStore } from "../../core/task.js";
 
 const PlanInputSchema = z.object({
   walletAddress: z.string().min(1),
@@ -7,11 +8,13 @@ const PlanInputSchema = z.object({
 });
 
 const ExecuteInputSchema = z.object({
-  plan: z.object({ moves: z.array(z.unknown()) })
+  plan: z.object({ moves: z.array(z.unknown()) }),
+  async: z.boolean().optional()
 });
 
 export interface ToolContext {
   client: SettlementClient;
+  tasks?: TaskStore;
 }
 
 export const rebalancePlanTool = {
@@ -25,9 +28,20 @@ export const rebalancePlanTool = {
 
 export const rebalanceExecuteTool = {
   name: "sw4p.rebalance_execute" as const,
-  description: "Execute a rebalance plan. Returns the list of intent IDs.",
+  description: "Execute a rebalance plan. Returns intent IDs synchronously, or a task handle when async=true (recommended for multi-leg plans).",
   inputSchema: ExecuteInputSchema,
   async handler(input: z.infer<typeof ExecuteInputSchema>, ctx: ToolContext) {
+    if (input.async && ctx.tasks) {
+      const handle = ctx.tasks.create("sw4p.rebalance_execute");
+      void ctx.tasks.run(handle.taskId, async (taskCtx) => {
+        const total = input.plan.moves.length;
+        taskCtx.progress({ current: 0, total });
+        const result = await ctx.client.executeRebalance(input.plan);
+        taskCtx.progress({ current: total, total });
+        return result;
+      }).catch(() => undefined);
+      return { taskId: handle.taskId, status: "pending" as const };
+    }
     return ctx.client.executeRebalance(input.plan) as Promise<{ intentIds: string[] }>;
   }
 };
