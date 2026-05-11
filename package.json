@@ -2,7 +2,7 @@
   "name": "@sw4p/kit",
   "version": "0.1.0",
   "description": "Agent surface for sw4p — MCP, x402, A2A, AP2, intents over the live settlement engine.",
-  "private": true,
+  "private": false,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -63,5 +63,28 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "license": "UNLICENSED"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Render-Network-OS/sw4p-kit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Render-Network-OS/sw4p-kit/issues"
+  },
+  "homepage": "https://github.com/Render-Network-OS/sw4p-kit#readme",
+  "keywords": [
+    "sw4p",
+    "settlement",
+    "cross-chain",
+    "mcp",
+    "x402",
+    "ap2",
+    "a2a",
+    "erc-7683",
+    "cctp",
+    "kora",
+    "solana",
+    "agent-payments",
+    "stablecoin"
+  ]
 }
