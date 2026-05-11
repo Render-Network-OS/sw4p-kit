@@ -1,0 +1,41 @@
+{
+  "name": "@sw4p/kit",
+  "version": "0.1.0",
+  "description": "Agent surface for sw4p — MCP, x402, A2A, AP2, intents over the live settlement engine.",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" },
+    "./core": { "import": "./dist/core/index.js", "types": "./dist/core/index.d.ts" },
+    "./mcp": { "import": "./dist/mcp/index.js", "types": "./dist/mcp/index.d.ts" },
+    "./x402": { "import": "./dist/x402/index.js", "types": "./dist/x402/index.d.ts" },
+    "./a2a": { "import": "./dist/a2a/index.js", "types": "./dist/a2a/index.d.ts" },
+    "./ap2": { "import": "./dist/ap2/index.js", "types": "./dist/ap2/index.d.ts" },
+    "./intents": { "import": "./dist/intents/index.js", "types": "./dist/intents/index.d.ts" }
+  },
+  "bin": {
+    "sw4p-mcp": "dist/mcp/bin.js"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:smoke": "vitest run smoke/",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": { "node": ">=18.0.0" },
+  "license": "UNLICENSED"
+}
