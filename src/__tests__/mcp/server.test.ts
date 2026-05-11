@@ -4,7 +4,7 @@ import { SettlementClient } from "../../core/client.js";
 import { mockSdkClient } from "../_helpers/mock-sdk.js";
 
 describe("createServer", () => {
-  it("registers all 7 sw4p tools", () => {
+  it("registers 7 base tools without a signer", () => {
     const sdk = mockSdkClient();
     const client = new SettlementClient({ sdk: sdk as never });
     const server = createServer({ client });
@@ -18,6 +18,17 @@ describe("createServer", () => {
       "sw4p.status",
       "sw4p.task"
     ]);
+  });
+
+  it("registers 9 tools (incl. AP2) when a signer is provided", async () => {
+    const { HmacSigner } = await import("../../ap2/mandate.js");
+    const sdk = mockSdkClient();
+    const client = new SettlementClient({ sdk: sdk as never });
+    const server = createServer({ client, signer: new HmacSigner("k") });
+    const names = server.listTools().map((t) => t.name).sort();
+    expect(names).toContain("sw4p.ap2.cart_propose");
+    expect(names).toContain("sw4p.ap2.cart_execute");
+    expect(names).toHaveLength(9);
   });
 
   it("dispatches by tool name", async () => {
