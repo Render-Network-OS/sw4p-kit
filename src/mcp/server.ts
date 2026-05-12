@@ -24,6 +24,7 @@ export interface ServerOptions {
   solana?: SolanaDevnetAdapter;
   base?: BaseSepoliaAdapter;
   cctpMint?: CctpMintToolContext["cctpMint"];
+  cctpBurnSolana?: { binaryPath: string; solanaRpcUrl: string; relayerPrivateKey: string };
 }
 
 export interface FullToolContext {
@@ -33,6 +34,7 @@ export interface FullToolContext {
   solana?: SolanaDevnetAdapter;
   base?: BaseSepoliaAdapter;
   cctpMint?: CctpMintToolContext["cctpMint"];
+  cctpBurnSolana?: { binaryPath: string; solanaRpcUrl: string; relayerPrivateKey: string };
 }
 
 interface ToolDescriptor {
@@ -91,6 +93,7 @@ export function createServer(opts: ServerOptions) {
       if (opts.solana) ctx.solana = opts.solana;
       if (opts.base) ctx.base = opts.base;
       if (opts.cctpMint) ctx.cctpMint = opts.cctpMint;
+      if (opts.cctpBurnSolana) (ctx as never as { cctpBurnSolana: typeof opts.cctpBurnSolana }).cctpBurnSolana = opts.cctpBurnSolana;
       return tool.handler(input, ctx);
     },
   };

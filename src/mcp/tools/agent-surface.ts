@@ -40,6 +40,11 @@ export interface AgentSurfaceContext {
     solanaRpcUrl: string;
     relayerPrivateKey: string;
   };
+  cctpBurnSolana?: {
+    binaryPath: string;
+    solanaRpcUrl: string;
+    relayerPrivateKey: string;
+  };
 }
 
 function inferChain(addr: string): "solana" | "evm" | "unknown" {
@@ -159,9 +164,12 @@ export const sendTool = {
     if (fromHint === "base" && destChain === "solana" && ctx.base && ctx.cctpMint && baseBalance >= amountNum) {
       return executeCrossChainBaseToSolana(ctx, input, start);
     }
+    if (fromHint === "solana" && destChain === "evm" && ctx.solana && ctx.base && ctx.cctpBurnSolana && solBalance >= amountNum) {
+      return executeCrossChainSolanaToBase(ctx, input, start);
+    }
 
     // Same-chain transfers — fast path.
-    if (fromHint !== "base" && destChain === "solana" && solBalance >= amountNum && ctx.solana) {
+    if (fromHint !== "base" && fromHint !== "solana" && destChain === "solana" && solBalance >= amountNum && ctx.solana) {
       const tx = await ctx.solana.transferUsdc({ recipient: input.recipient, amount: input.amount });
       return {
         status: "settled",
@@ -173,7 +181,7 @@ export const sendTool = {
         totalElapsedMs: Date.now() - start,
       };
     }
-    if (destChain === "evm" && baseBalance >= amountNum && ctx.base) {
+    if (fromHint !== "solana" && destChain === "evm" && baseBalance >= amountNum && ctx.base) {
       const tx = await ctx.base.transferUsdc({ recipient: input.recipient, amount: input.amount });
       return {
         status: "settled",
@@ -227,11 +235,97 @@ async function executeCrossChainBaseToSolana(
     amount: input.amount,
     recipient: input.recipient,
     asset: "USDC",
-    route: "cross-chain (cctp v2 fast transfer)",
+    route: "sw4p cross-chain settlement",
     steps: [
-      { chain: "base", action: "burn", signature: burn.burnTxHash, explorerUrl: burn.basescanUrl, elapsedMs: burnElapsed },
-      { chain: "iris", action: "attest", signature: "circle-attestation", explorerUrl: burn.irisPollUrl, elapsedMs: attestElapsed },
-      { chain: "solana", action: "mint", signature: mint.signature, explorerUrl: `https://orbmarkets.io/tx/${mint.signature}?cluster=devnet`, elapsedMs: mintElapsed },
+      { chain: "base", action: "submit", signature: burn.burnTxHash, explorerUrl: burn.basescanUrl, elapsedMs: burnElapsed + attestElapsed },
+      { chain: "solana", action: "settle", signature: mint.signature, explorerUrl: `https://orbmarkets.io/tx/${mint.signature}?cluster=devnet`, elapsedMs: mintElapsed },
+    ],
+    totalElapsedMs: Date.now() - start,
+  };
+}
+
+async function pollIrisSolana(burnSignature: string): Promise<{ message: string; attestation: string }> {
+  const url = `https://iris-api-sandbox.circle.com/v2/messages/5?transactionHash=${burnSignature}`;
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const r = await fetch(url);
+    if (r.ok) {
+      const body = (await r.json()) as { messages?: Array<{ status: string; message: string; attestation: string }> };
+      const m = body.messages?.[0];
+      if (m?.status === "complete") return { message: m.message, attestation: m.attestation };
+    }
+    await sleep(2000);
+  }
+  throw new Error("Iris attestation (Solana → EVM) never completed");
+}
+
+async function executeBurnBinarySolana(
+  bin: NonNullable<AgentSurfaceContext["cctpBurnSolana"]>,
+  amountMicroUsdc: bigint,
+  destDomain: number,
+  evmRecipient: string
+): Promise<{ signature: string }> {
+  const { spawn } = await import("node:child_process");
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin.binaryPath, [amountMicroUsdc.toString(), String(destDomain), evmRecipient], {
+      env: {
+        ...process.env,
+        SOLANA_RPC_URL: bin.solanaRpcUrl,
+        SOLANA_RELAYER_PRIVATE_KEY: bin.relayerPrivateKey,
+        RUST_LOG: "info",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c) => (stdout += c.toString()));
+    child.stderr.on("data", (c) => (stderr += c.toString()));
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`burn binary exited ${code}: ${stderr || stdout}`));
+        return;
+      }
+      const m = (stdout + stderr).match(/Transaction Signature: (\S+)/);
+      if (!m) {
+        reject(new Error(`signature not found: ${stdout} ${stderr}`));
+        return;
+      }
+      resolve({ signature: m[1]! });
+    });
+  });
+}
+
+async function executeCrossChainSolanaToBase(
+  ctx: AgentSurfaceContext,
+  input: { amount: string; recipient: string },
+  start: number
+): Promise<SendResult> {
+  if (!ctx.base || !ctx.cctpBurnSolana) throw new Error("base + cctpBurnSolana required");
+  const amountMicro = BigInt(Math.round(Number.parseFloat(input.amount) * 1_000_000));
+  const DOMAIN_BASE = 6;
+
+  const burnStart = Date.now();
+  const burn = await executeBurnBinarySolana(ctx.cctpBurnSolana, amountMicro, DOMAIN_BASE, input.recipient);
+  const burnElapsed = Date.now() - burnStart;
+
+  const attestStart = Date.now();
+  const { message, attestation } = await pollIrisSolana(burn.signature);
+  const attestElapsed = Date.now() - attestStart;
+
+  const receiveStart = Date.now();
+  const receive = await ctx.base.cctpReceiveFromSolana({ message, attestation });
+  const receiveElapsed = Date.now() - receiveStart;
+
+  return {
+    status: "settled",
+    amount: input.amount,
+    recipient: input.recipient,
+    asset: "USDC",
+    route: "cross-chain (cctp v2 · solana → base)",
+    steps: [
+      { chain: "solana", action: "burn", signature: burn.signature, explorerUrl: `https://orbmarkets.io/tx/${burn.signature}?cluster=devnet`, elapsedMs: burnElapsed },
+      { chain: "iris", action: "attest", signature: "circle-attestation", explorerUrl: `https://iris-api-sandbox.circle.com/v2/messages/5?transactionHash=${burn.signature}`, elapsedMs: attestElapsed },
+      { chain: "base", action: "receive (mint)", signature: receive.receiveTxHash, explorerUrl: receive.basescanUrl, elapsedMs: receiveElapsed },
     ],
     totalElapsedMs: Date.now() - start,
   };
