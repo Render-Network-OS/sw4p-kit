@@ -6,12 +6,15 @@ import { createServer } from "./server.js";
 import { SettlementClient } from "../core/client.js";
 import { HmacSigner } from "../ap2/mandate.js";
 import { SolanaDevnetAdapter } from "./solana-devnet.js";
+import { BaseSepoliaAdapter } from "./base-sepolia.js";
 
 const SW4P_API_URL = process.env.SW4P_API_URL ?? "https://api.sw4p.io";
 const SW4P_API_KEY = process.env.SW4P_API_KEY;
 const AP2_SIGNING_KEY = process.env.AP2_SIGNING_KEY;
 const SOLANA_DEVNET_PRIVATE_KEY = process.env.SOLANA_DEVNET_PRIVATE_KEY;
 const SOLANA_DEVNET_RPC_URL = process.env.SOLANA_DEVNET_RPC_URL ?? "https://api.devnet.solana.com";
+const BASE_SEPOLIA_PRIVATE_KEY = process.env.BASE_SEPOLIA_PRIVATE_KEY;
+const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org";
 
 if (!SW4P_API_KEY) {
   console.error("SW4P_API_KEY is required");
@@ -45,9 +48,13 @@ const signer = AP2_SIGNING_KEY ? new HmacSigner(AP2_SIGNING_KEY) : undefined;
 const solana = SOLANA_DEVNET_PRIVATE_KEY
   ? new SolanaDevnetAdapter({ privateKey: SOLANA_DEVNET_PRIVATE_KEY, rpcUrl: SOLANA_DEVNET_RPC_URL })
   : undefined;
+const base = BASE_SEPOLIA_PRIVATE_KEY
+  ? new BaseSepoliaAdapter({ privateKey: BASE_SEPOLIA_PRIVATE_KEY, rpcUrl: BASE_SEPOLIA_RPC_URL })
+  : undefined;
 const serverOpts: Parameters<typeof createServer>[0] = { client };
 if (signer) serverOpts.signer = signer;
 if (solana) serverOpts.solana = solana;
+if (base) serverOpts.base = base;
 const kit = createServer(serverOpts);
 
 const mcp = new Server(

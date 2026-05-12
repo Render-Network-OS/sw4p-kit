@@ -111,7 +111,7 @@ export class SolanaDevnetAdapter {
       signature: sig,
       fromAta: fromAta.toBase58(),
       toAta: toAta.toBase58(),
-      explorerUrl: `https://solscan.io/tx/${sig}?cluster=devnet`,
+      explorerUrl: `https://orbmarkets.io/tx/${sig}?cluster=devnet`,
       cluster: "devnet",
       settledAt: new Date().toISOString(),
     };
@@ -127,6 +127,6 @@ export class SolanaDevnetAdapter {
       })
     );
     const sig = await sendAndConfirmTransaction(this.conn, tx, [this.payer]);
-    return { signature: sig, explorerUrl: `https://solscan.io/tx/${sig}?cluster=devnet` };
+    return { signature: sig, explorerUrl: `https://orbmarkets.io/tx/${sig}?cluster=devnet` };
   }
 }
