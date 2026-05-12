@@ -321,11 +321,10 @@ async function executeCrossChainSolanaToBase(
     amount: input.amount,
     recipient: input.recipient,
     asset: "USDC",
-    route: "cross-chain (cctp v2 · solana → base)",
+    route: "sw4p cross-chain settlement",
     steps: [
-      { chain: "solana", action: "burn", signature: burn.signature, explorerUrl: `https://orbmarkets.io/tx/${burn.signature}?cluster=devnet`, elapsedMs: burnElapsed },
-      { chain: "iris", action: "attest", signature: "circle-attestation", explorerUrl: `https://iris-api-sandbox.circle.com/v2/messages/5?transactionHash=${burn.signature}`, elapsedMs: attestElapsed },
-      { chain: "base", action: "receive (mint)", signature: receive.receiveTxHash, explorerUrl: receive.basescanUrl, elapsedMs: receiveElapsed },
+      { chain: "solana", action: "submit", signature: burn.signature, explorerUrl: `https://orbmarkets.io/tx/${burn.signature}?cluster=devnet`, elapsedMs: burnElapsed + attestElapsed },
+      { chain: "base", action: "settle", signature: receive.receiveTxHash, explorerUrl: receive.basescanUrl, elapsedMs: receiveElapsed },
     ],
     totalElapsedMs: Date.now() - start,
   };
