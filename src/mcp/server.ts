@@ -12,6 +12,7 @@ import { taskTool } from "./tools/task.js";
 import { ap2CartProposeTool, ap2CartExecuteTool } from "./tools/ap2.js";
 import { solanaDevnetTransferTool, solanaDevnetBalanceTool } from "./tools/solana-devnet.js";
 import { baseSepoliaTransferTool, baseSepoliaBalanceTool } from "./tools/base-sepolia.js";
+import { cctpBurnToSolanaTool, cctpAttestationStatusTool } from "./tools/cctp.js";
 
 export interface ServerOptions {
   client: SettlementClient;
@@ -58,7 +59,7 @@ export function createServer(opts: ServerOptions) {
     : [];
 
   const baseChainTools: ToolDescriptor[] = opts.base
-    ? ([baseSepoliaTransferTool, baseSepoliaBalanceTool] as unknown as ToolDescriptor[])
+    ? ([baseSepoliaTransferTool, baseSepoliaBalanceTool, cctpBurnToSolanaTool, cctpAttestationStatusTool] as unknown as ToolDescriptor[])
     : [];
 
   const tools = [...baseTools, ...ap2Tools, ...solanaTools, ...baseChainTools];

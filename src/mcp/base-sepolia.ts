@@ -8,15 +8,37 @@
  */
 
 import { JsonRpcProvider, Wallet, Contract, parseUnits, formatUnits } from "ethers";
+import bs58 from "bs58";
 
 const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const USDC_DECIMALS = 6;
 
+// CCTP V2 TokenMessenger — same address on every testnet via CREATE2.
+const TOKEN_MESSENGER_V2_TESTNET = "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA";
+// CCTP V2 destination domain IDs.
+const DOMAIN_SOLANA = 5;
+// Fast Transfer finality threshold (≤1000 = Fast).
+const FAST_FINALITY = 1000;
+// Zero bytes32 — no destinationCaller restriction (anyone can mint on destination).
+const ZERO_BYTES32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
 const ERC20_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
   "function decimals() view returns (uint8)",
 ];
+
+const TOKEN_MESSENGER_V2_ABI = [
+  "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)",
+];
+
+function solanaPubkeyToBytes32(pubkey: string): string {
+  const decoded = bs58.decode(pubkey);
+  if (decoded.length !== 32) throw new Error(`solana pubkey must decode to 32 bytes, got ${decoded.length}`);
+  return "0x" + Buffer.from(decoded).toString("hex");
+}
 
 export interface BaseSepoliaAdapterOptions {
   privateKey: string;
@@ -51,6 +73,77 @@ export class BaseSepoliaAdapter {
     const target = owner ?? this.walletAddress;
     const raw = await this.provider.getBalance(target);
     return formatUnits(raw, 18);
+  }
+
+  /**
+   * Real CCTP V2 Fast Transfer burn — Base Sepolia → Solana devnet.
+   * Approves USDC if needed, then calls depositForBurn on TokenMessengerV2.
+   * Returns the Base Sepolia tx hash + the Iris attestation polling URL.
+   * The mint side on Solana is handled by Circle's Iris attestation flow.
+   */
+  async cctpBurnToSolana(opts: {
+    amount: string;
+    solanaRecipient: string;
+    maxFee?: string;
+  }): Promise<{
+    burnTxHash: string;
+    blockNumber: number;
+    amount: string;
+    solanaRecipient: string;
+    destinationDomain: number;
+    irisPollUrl: string;
+    basescanUrl: string;
+    finalityThreshold: number;
+    settledAt: string;
+  }> {
+    const amount = parseUnits(opts.amount, USDC_DECIMALS);
+    const maxFee = opts.maxFee ? parseUnits(opts.maxFee, USDC_DECIMALS) : (amount / 1000n); // default 0.1% max fee
+    const mintRecipient = solanaPubkeyToBytes32(opts.solanaRecipient);
+
+    const usdc = new Contract(USDC_BASE_SEPOLIA, ERC20_ABI, this.wallet) as Contract & {
+      allowance(o: string, s: string): Promise<bigint>;
+      approve(s: string, amt: bigint): Promise<{ wait(): Promise<unknown> }>;
+    };
+    const tm = new Contract(TOKEN_MESSENGER_V2_TESTNET, TOKEN_MESSENGER_V2_ABI, this.wallet) as Contract & {
+      depositForBurn(
+        amount: bigint,
+        destDomain: number,
+        mintRecipient: string,
+        burnToken: string,
+        destCaller: string,
+        maxFee: bigint,
+        minFinalityThreshold: number
+      ): Promise<{ hash: string; wait(): Promise<{ blockNumber: number }> }>;
+    };
+
+    const currentAllowance = await usdc.allowance(this.walletAddress, TOKEN_MESSENGER_V2_TESTNET);
+    if (currentAllowance < amount) {
+      const approveTx = await usdc.approve(TOKEN_MESSENGER_V2_TESTNET, amount);
+      await approveTx.wait();
+    }
+
+    const burnTx = await tm.depositForBurn(
+      amount,
+      DOMAIN_SOLANA,
+      mintRecipient,
+      USDC_BASE_SEPOLIA,
+      ZERO_BYTES32,
+      maxFee,
+      FAST_FINALITY
+    );
+    const receipt = await burnTx.wait();
+
+    return {
+      burnTxHash: burnTx.hash,
+      blockNumber: receipt?.blockNumber ?? 0,
+      amount: opts.amount,
+      solanaRecipient: opts.solanaRecipient,
+      destinationDomain: DOMAIN_SOLANA,
+      irisPollUrl: `https://iris-api-sandbox.circle.com/v2/messages/6?transactionHash=${burnTx.hash}`,
+      basescanUrl: `https://sepolia.basescan.org/tx/${burnTx.hash}`,
+      finalityThreshold: FAST_FINALITY,
+      settledAt: new Date().toISOString(),
+    };
   }
 
   async transferUsdc(opts: {
