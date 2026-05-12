@@ -4,9 +4,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createServer } from "./server.js";
 import { SettlementClient } from "../core/client.js";
+import { HmacSigner } from "../ap2/mandate.js";
+import { SolanaDevnetAdapter } from "./solana-devnet.js";
 
 const SW4P_API_URL = process.env.SW4P_API_URL ?? "https://api.sw4p.io";
 const SW4P_API_KEY = process.env.SW4P_API_KEY;
+const AP2_SIGNING_KEY = process.env.AP2_SIGNING_KEY;
+const SOLANA_DEVNET_PRIVATE_KEY = process.env.SOLANA_DEVNET_PRIVATE_KEY;
+const SOLANA_DEVNET_RPC_URL = process.env.SOLANA_DEVNET_RPC_URL ?? "https://api.devnet.solana.com";
 
 if (!SW4P_API_KEY) {
   console.error("SW4P_API_KEY is required");
@@ -18,7 +23,7 @@ async function asJson<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${SW4P_API_KEY}` };
+const authHeaders = { "Content-Type": "application/json", "X-API-Key": SW4P_API_KEY };
 
 const sdkClient = {
   estimate: (p: unknown) =>
@@ -26,9 +31,9 @@ const sdkClient = {
   transfer: (p: unknown) =>
     fetch(`${SW4P_API_URL}/sdk/v1/transfer`, { method: "POST", headers: authHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ intentId: string; status: string }>,
   status: (id: string) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/status/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${SW4P_API_KEY}` } }).then(asJson) as Promise<{ intentId: string; state: string }>,
+    fetch(`${SW4P_API_URL}/sdk/v1/status/${encodeURIComponent(id)}`, { headers: { "X-API-Key": SW4P_API_KEY } }).then(asJson) as Promise<{ intentId: string; state: string }>,
   getPortfolio: (addr: string) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/portfolio/${encodeURIComponent(addr)}`, { headers: { Authorization: `Bearer ${SW4P_API_KEY}` } }).then(asJson),
+    fetch(`${SW4P_API_URL}/sdk/v1/portfolio/${encodeURIComponent(addr)}`, { headers: { "X-API-Key": SW4P_API_KEY } }).then(asJson),
   planRebalance: (addr: string, p: unknown) =>
     fetch(`${SW4P_API_URL}/sdk/v1/rebalance/plan`, { method: "POST", headers: authHeaders, body: JSON.stringify({ walletAddress: addr, ...(p as object) }) }).then(asJson),
   executeRebalance: (plan: unknown) =>
@@ -36,7 +41,14 @@ const sdkClient = {
 };
 
 const client = new SettlementClient({ sdk: sdkClient as never });
-const kit = createServer({ client });
+const signer = AP2_SIGNING_KEY ? new HmacSigner(AP2_SIGNING_KEY) : undefined;
+const solana = SOLANA_DEVNET_PRIVATE_KEY
+  ? new SolanaDevnetAdapter({ privateKey: SOLANA_DEVNET_PRIVATE_KEY, rpcUrl: SOLANA_DEVNET_RPC_URL })
+  : undefined;
+const serverOpts: Parameters<typeof createServer>[0] = { client };
+if (signer) serverOpts.signer = signer;
+if (solana) serverOpts.solana = solana;
+const kit = createServer(serverOpts);
 
 const mcp = new Server(
   { name: "sw4p-kit", version: "0.1.0" },

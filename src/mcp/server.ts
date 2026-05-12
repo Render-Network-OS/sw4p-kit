@@ -1,6 +1,7 @@
 import type { SettlementClient } from "../core/client.js";
 import { TaskStore } from "../core/task.js";
 import type { Signer } from "../ap2/mandate.js";
+import type { SolanaDevnetAdapter } from "./solana-devnet.js";
 import { estimateTool } from "./tools/estimate.js";
 import { settleTool } from "./tools/settle.js";
 import { statusTool } from "./tools/status.js";
@@ -8,17 +9,20 @@ import { portfolioTool } from "./tools/portfolio.js";
 import { rebalancePlanTool, rebalanceExecuteTool } from "./tools/rebalance.js";
 import { taskTool } from "./tools/task.js";
 import { ap2CartProposeTool, ap2CartExecuteTool } from "./tools/ap2.js";
+import { solanaDevnetTransferTool, solanaDevnetBalanceTool } from "./tools/solana-devnet.js";
 
 export interface ServerOptions {
   client: SettlementClient;
   tasks?: TaskStore;
   signer?: Signer;
+  solana?: SolanaDevnetAdapter;
 }
 
 export interface FullToolContext {
   client: SettlementClient;
   tasks: TaskStore;
   signer?: Signer;
+  solana?: SolanaDevnetAdapter;
 }
 
 interface ToolDescriptor {
@@ -45,7 +49,11 @@ export function createServer(opts: ServerOptions) {
     ? ([ap2CartProposeTool, ap2CartExecuteTool] as unknown as ToolDescriptor[])
     : [];
 
-  const tools = [...baseTools, ...ap2Tools];
+  const solanaTools: ToolDescriptor[] = opts.solana
+    ? ([solanaDevnetTransferTool, solanaDevnetBalanceTool] as unknown as ToolDescriptor[])
+    : [];
+
+  const tools = [...baseTools, ...ap2Tools, ...solanaTools];
   const byName = new Map(tools.map((t) => [t.name, t]));
 
   return {
@@ -58,6 +66,7 @@ export function createServer(opts: ServerOptions) {
       if (!tool) throw new Error(`unknown tool: ${name}`);
       const ctx: FullToolContext = { client: opts.client, tasks };
       if (opts.signer) ctx.signer = opts.signer;
+      if (opts.solana) ctx.solana = opts.solana;
       return tool.handler(input, ctx);
     }
   };
