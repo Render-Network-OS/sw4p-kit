@@ -18,6 +18,8 @@ const USDC_DECIMALS = 6;
 
 // CCTP V2 TokenMessenger — same address on every testnet via CREATE2.
 const TOKEN_MESSENGER_V2_TESTNET = "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA";
+// CCTP V2 MessageTransmitter — same CREATE2 address on every testnet.
+const MESSAGE_TRANSMITTER_V2_TESTNET = "0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275";
 // CCTP V2 destination domain IDs.
 const DOMAIN_SOLANA = 5;
 // Fast Transfer finality threshold (≤1000 = Fast).
@@ -35,6 +37,10 @@ const ERC20_ABI = [
 
 const TOKEN_MESSENGER_V2_ABI = [
   "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)",
+];
+
+const MESSAGE_TRANSMITTER_V2_ABI = [
+  "function receiveMessage(bytes message, bytes attestation) returns (bool)",
 ];
 
 function solanaPubkeyToBytes32(pubkey: string): string {
@@ -164,6 +170,36 @@ export class BaseSepoliaAdapter {
       irisPollUrl: `https://iris-api-sandbox.circle.com/v2/messages/6?transactionHash=${burnTx.hash}`,
       basescanUrl: `https://sepolia.basescan.org/tx/${burnTx.hash}`,
       finalityThreshold: FAST_FINALITY,
+      settledAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Submit the CCTP V2 receive (mint) on Base Sepolia for a message that was
+   * burned on Solana devnet. Calls MessageTransmitter V2's receiveMessage
+   * with the Iris-attested message + attestation bytes.
+   */
+  async cctpReceiveFromSolana(opts: {
+    message: string;
+    attestation: string;
+  }): Promise<{
+    receiveTxHash: string;
+    blockNumber: number;
+    basescanUrl: string;
+    settledAt: string;
+  }> {
+    const mt = new Contract(MESSAGE_TRANSMITTER_V2_TESTNET, MESSAGE_TRANSMITTER_V2_ABI, this.wallet) as Contract & {
+      receiveMessage(
+        message: string,
+        attestation: string
+      ): Promise<{ hash: string; wait(): Promise<{ blockNumber: number }> }>;
+    };
+    const tx = await mt.receiveMessage(opts.message, opts.attestation);
+    const receipt = await tx.wait();
+    return {
+      receiveTxHash: tx.hash,
+      blockNumber: receipt?.blockNumber ?? 0,
+      basescanUrl: `https://sepolia.basescan.org/tx/${tx.hash}`,
       settledAt: new Date().toISOString(),
     };
   }
