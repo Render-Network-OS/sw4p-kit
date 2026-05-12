@@ -15,6 +15,7 @@ import { baseSepoliaTransferTool, baseSepoliaBalanceTool } from "./tools/base-se
 import { cctpBurnToSolanaTool, cctpAttestationStatusTool } from "./tools/cctp.js";
 import { cctpMintSolanaDevnetTool } from "./tools/cctp-mint.js";
 import type { CctpMintToolContext } from "./tools/cctp-mint.js";
+import { balanceTool, sendTool } from "./tools/agent-surface.js";
 
 export interface ServerOptions {
   client: SettlementClient;
@@ -44,33 +45,37 @@ interface ToolDescriptor {
 export function createServer(opts: ServerOptions) {
   const tasks = opts.tasks ?? new TaskStore();
 
-  const baseTools: ToolDescriptor[] = [
+  // FRONTIER agent surface — the only tools an AI should reach for. Hides
+  // chains, rails, attestation polling. The kit handles routing.
+  const agentSurface: ToolDescriptor[] =
+    opts.solana || opts.base
+      ? ([balanceTool, sendTool] as unknown as ToolDescriptor[])
+      : [];
+
+  // Stable protocol surface for advanced integrations / power users.
+  const protocolSurface: ToolDescriptor[] = [
     estimateTool,
     settleTool,
     statusTool,
     portfolioTool,
     rebalancePlanTool,
     rebalanceExecuteTool,
-    taskTool
+    taskTool,
   ] as unknown as ToolDescriptor[];
 
   const ap2Tools: ToolDescriptor[] = opts.signer
     ? ([ap2CartProposeTool, ap2CartExecuteTool] as unknown as ToolDescriptor[])
     : [];
 
-  const solanaTools: ToolDescriptor[] = opts.solana
-    ? ([solanaDevnetTransferTool, solanaDevnetBalanceTool] as unknown as ToolDescriptor[])
-    : [];
+  // Low-level chain helpers — kept for debugging + power users. Agents
+  // generally don't reach for these directly; sw4p.send orchestrates them.
+  const advancedChainTools: ToolDescriptor[] = [
+    ...(opts.solana ? [solanaDevnetTransferTool, solanaDevnetBalanceTool] : []),
+    ...(opts.base ? [baseSepoliaTransferTool, baseSepoliaBalanceTool, cctpBurnToSolanaTool, cctpAttestationStatusTool] : []),
+    ...(opts.cctpMint ? [cctpMintSolanaDevnetTool] : []),
+  ] as unknown as ToolDescriptor[];
 
-  const baseChainTools: ToolDescriptor[] = opts.base
-    ? ([baseSepoliaTransferTool, baseSepoliaBalanceTool, cctpBurnToSolanaTool, cctpAttestationStatusTool] as unknown as ToolDescriptor[])
-    : [];
-
-  const cctpMintTools: ToolDescriptor[] = opts.cctpMint
-    ? ([cctpMintSolanaDevnetTool] as unknown as ToolDescriptor[])
-    : [];
-
-  const tools = [...baseTools, ...ap2Tools, ...solanaTools, ...baseChainTools, ...cctpMintTools];
+  const tools = [...agentSurface, ...protocolSurface, ...ap2Tools, ...advancedChainTools];
   const byName = new Map(tools.map((t) => [t.name, t]));
 
   return {
@@ -87,6 +92,6 @@ export function createServer(opts: ServerOptions) {
       if (opts.base) ctx.base = opts.base;
       if (opts.cctpMint) ctx.cctpMint = opts.cctpMint;
       return tool.handler(input, ctx);
-    }
+    },
   };
 }
