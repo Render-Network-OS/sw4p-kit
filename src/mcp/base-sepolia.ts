@@ -9,8 +9,11 @@
 
 import { JsonRpcProvider, Wallet, Contract, parseUnits, formatUnits } from "ethers";
 import bs58 from "bs58";
+import { PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+const USDC_SOLANA_DEVNET = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 const USDC_DECIMALS = 6;
 
 // CCTP V2 TokenMessenger — same address on every testnet via CREATE2.
@@ -38,6 +41,17 @@ function solanaPubkeyToBytes32(pubkey: string): string {
   const decoded = bs58.decode(pubkey);
   if (decoded.length !== 32) throw new Error(`solana pubkey must decode to 32 bytes, got ${decoded.length}`);
   return "0x" + Buffer.from(decoded).toString("hex");
+}
+
+/**
+ * CCTP V2 Solana receive requires mintRecipient to be the destination SPL
+ * Token Account (ATA), not the owner wallet. Given an owner wallet pubkey,
+ * compute the canonical ATA for USDC on Solana devnet.
+ */
+function solanaOwnerToUsdcAta(owner: string): string {
+  const ownerPk = new PublicKey(owner);
+  const ata = getAssociatedTokenAddressSync(USDC_SOLANA_DEVNET, ownerPk);
+  return ata.toBase58();
 }
 
 export interface BaseSepoliaAdapterOptions {
@@ -90,6 +104,7 @@ export class BaseSepoliaAdapter {
     blockNumber: number;
     amount: string;
     solanaRecipient: string;
+    mintRecipientAta: string;
     destinationDomain: number;
     irisPollUrl: string;
     basescanUrl: string;
@@ -98,7 +113,13 @@ export class BaseSepoliaAdapter {
   }> {
     const amount = parseUnits(opts.amount, USDC_DECIMALS);
     const maxFee = opts.maxFee ? parseUnits(opts.maxFee, USDC_DECIMALS) : (amount / 1000n); // default 0.1% max fee
-    const mintRecipient = solanaPubkeyToBytes32(opts.solanaRecipient);
+    // CCTP V2 Solana receive requires the destination SPL token account (ATA),
+    // not the wallet/owner pubkey. If the caller supplied an owner, derive the
+    // ATA. If they already supplied an ATA, pass it through.
+    const recipientAta = opts.solanaRecipient.length === 44 || opts.solanaRecipient.length === 43
+      ? solanaOwnerToUsdcAta(opts.solanaRecipient)
+      : opts.solanaRecipient;
+    const mintRecipient = solanaPubkeyToBytes32(recipientAta);
 
     const usdc = new Contract(USDC_BASE_SEPOLIA, ERC20_ABI, this.wallet) as Contract & {
       allowance(o: string, s: string): Promise<bigint>;
@@ -138,6 +159,7 @@ export class BaseSepoliaAdapter {
       blockNumber: receipt?.blockNumber ?? 0,
       amount: opts.amount,
       solanaRecipient: opts.solanaRecipient,
+      mintRecipientAta: recipientAta,
       destinationDomain: DOMAIN_SOLANA,
       irisPollUrl: `https://iris-api-sandbox.circle.com/v2/messages/6?transactionHash=${burnTx.hash}`,
       basescanUrl: `https://sepolia.basescan.org/tx/${burnTx.hash}`,
