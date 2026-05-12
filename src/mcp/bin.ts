@@ -15,6 +15,8 @@ const SOLANA_DEVNET_PRIVATE_KEY = process.env.SOLANA_DEVNET_PRIVATE_KEY;
 const SOLANA_DEVNET_RPC_URL = process.env.SOLANA_DEVNET_RPC_URL ?? "https://api.devnet.solana.com";
 const BASE_SEPOLIA_PRIVATE_KEY = process.env.BASE_SEPOLIA_PRIVATE_KEY;
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org";
+const SW4P_CCTP_MINT_BIN = process.env.SW4P_CCTP_MINT_BIN;
+const SOLANA_RELAYER_PRIVATE_KEY = process.env.SOLANA_RELAYER_PRIVATE_KEY ?? process.env.SOLANA_DEVNET_PRIVATE_KEY;
 
 if (!SW4P_API_KEY) {
   console.error("SW4P_API_KEY is required");
@@ -51,10 +53,19 @@ const solana = SOLANA_DEVNET_PRIVATE_KEY
 const base = BASE_SEPOLIA_PRIVATE_KEY
   ? new BaseSepoliaAdapter({ privateKey: BASE_SEPOLIA_PRIVATE_KEY, rpcUrl: BASE_SEPOLIA_RPC_URL })
   : undefined;
+const cctpMint =
+  SW4P_CCTP_MINT_BIN && SOLANA_RELAYER_PRIVATE_KEY
+    ? {
+        binaryPath: SW4P_CCTP_MINT_BIN,
+        solanaRpcUrl: SOLANA_DEVNET_RPC_URL,
+        relayerPrivateKey: SOLANA_RELAYER_PRIVATE_KEY,
+      }
+    : undefined;
 const serverOpts: Parameters<typeof createServer>[0] = { client };
 if (signer) serverOpts.signer = signer;
 if (solana) serverOpts.solana = solana;
 if (base) serverOpts.base = base;
+if (cctpMint) serverOpts.cctpMint = cctpMint;
 const kit = createServer(serverOpts);
 
 const mcp = new Server(

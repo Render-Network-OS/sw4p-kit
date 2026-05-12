@@ -13,6 +13,8 @@ import { ap2CartProposeTool, ap2CartExecuteTool } from "./tools/ap2.js";
 import { solanaDevnetTransferTool, solanaDevnetBalanceTool } from "./tools/solana-devnet.js";
 import { baseSepoliaTransferTool, baseSepoliaBalanceTool } from "./tools/base-sepolia.js";
 import { cctpBurnToSolanaTool, cctpAttestationStatusTool } from "./tools/cctp.js";
+import { cctpMintSolanaDevnetTool } from "./tools/cctp-mint.js";
+import type { CctpMintToolContext } from "./tools/cctp-mint.js";
 
 export interface ServerOptions {
   client: SettlementClient;
@@ -20,6 +22,7 @@ export interface ServerOptions {
   signer?: Signer;
   solana?: SolanaDevnetAdapter;
   base?: BaseSepoliaAdapter;
+  cctpMint?: CctpMintToolContext["cctpMint"];
 }
 
 export interface FullToolContext {
@@ -28,6 +31,7 @@ export interface FullToolContext {
   signer?: Signer;
   solana?: SolanaDevnetAdapter;
   base?: BaseSepoliaAdapter;
+  cctpMint?: CctpMintToolContext["cctpMint"];
 }
 
 interface ToolDescriptor {
@@ -62,7 +66,11 @@ export function createServer(opts: ServerOptions) {
     ? ([baseSepoliaTransferTool, baseSepoliaBalanceTool, cctpBurnToSolanaTool, cctpAttestationStatusTool] as unknown as ToolDescriptor[])
     : [];
 
-  const tools = [...baseTools, ...ap2Tools, ...solanaTools, ...baseChainTools];
+  const cctpMintTools: ToolDescriptor[] = opts.cctpMint
+    ? ([cctpMintSolanaDevnetTool] as unknown as ToolDescriptor[])
+    : [];
+
+  const tools = [...baseTools, ...ap2Tools, ...solanaTools, ...baseChainTools, ...cctpMintTools];
   const byName = new Map(tools.map((t) => [t.name, t]));
 
   return {
@@ -77,6 +85,7 @@ export function createServer(opts: ServerOptions) {
       if (opts.signer) ctx.signer = opts.signer;
       if (opts.solana) ctx.solana = opts.solana;
       if (opts.base) ctx.base = opts.base;
+      if (opts.cctpMint) ctx.cctpMint = opts.cctpMint;
       return tool.handler(input, ctx);
     }
   };
