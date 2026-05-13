@@ -63,9 +63,23 @@ function memFs(initial: Record<string, string> = {}): MemFs {
     },
     unlink: async (p) => {
       unlinks.push(p);
-      // Mirror nodeFs: swallow ENOENT, otherwise let the caller decide.
-      if (!files.has(p)) return;
-      files.delete(p);
+      // Mirror nodeFs.unlink's control flow with full fidelity:
+      // try-the-real-unlink, catch any error, swallow ONLY ENOENT
+      // (propagate anything else). The observable behavior matches
+      // nodeFs — silent no-op for a missing file — but the
+      // implementation now structurally matches the seam, so a
+      // future test can replace this method with one that does NOT
+      // swallow and meaningfully exercise the contract.
+      try {
+        if (!files.has(p)) {
+          throw Object.assign(new Error(`ENOENT: no such file: ${p}`), {
+            code: "ENOENT",
+          });
+        }
+        files.delete(p);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+      }
     },
   };
   return self;
