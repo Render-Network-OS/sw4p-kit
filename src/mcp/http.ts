@@ -24,6 +24,8 @@
  * deployments and the right shape for hosted-gateway scenarios.
  */
 import { createServer as createHttpServer, type IncomingMessage, type Server as NodeHttpServer, type ServerResponse } from "node:http";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -31,6 +33,9 @@ import { createServer as createKitServer, type ServerOptions } from "./server.js
 import { SettlementClient } from "../core/client.js";
 import { HmacSigner } from "../ap2/mandate.js";
 import { buildSdkClient, type SdkClient } from "./_sdk-client.js";
+
+/** Package version, surfaced via `--version` for smoke tests and ops checks. */
+const SW4P_KIT_VERSION = "0.1.0";
 
 export interface HttpServerOptions {
   port?: number;
@@ -279,28 +284,75 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
   };
 }
 
-// CLI mode — run when invoked as `sw4p-mcp-http`.
-const isMain = (() => {
+/**
+ * Determine whether this module is the process entrypoint.
+ *
+ * We MUST resolve symlinks here because npm installs the `sw4p-mcp-http`
+ * bin as a symlink (e.g. `/usr/local/bin/sw4p-mcp-http -> .../dist/mcp/http.js`).
+ * Comparing the raw `process.argv[1]` (the symlink path) to
+ * `import.meta.url` (the real installed path) would never match, leaving
+ * the binary a silent no-op after `npm install`. `realpathSync` collapses
+ * the symlink to the canonical file path, which then compares equal to
+ * `fileURLToPath(import.meta.url)`.
+ *
+ * Exported so the test suite can spawn this module via a symlink and
+ * assert it boots identically to the direct path.
+ */
+export function isEntrypoint(): boolean {
   if (!process.argv[1]) return false;
-  const argv1 = process.argv[1];
-  const thisHref = import.meta.url;
-  // Compare resolved file paths so symlinks (npm bin) still match.
-  return thisHref === `file://${argv1}` || thisHref.endsWith("/mcp/http.js") && argv1.endsWith("/mcp/http.js");
-})();
+  try {
+    return realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
 
-if (isMain) {
-  startHttpServer()
-    .then((handle) => {
-      console.error(`[sw4p-mcp-http] listening on http://0.0.0.0:${handle.port}`);
-      const shutdown = (signal: string) => {
-        console.error(`[sw4p-mcp-http] ${signal} received — shutting down`);
-        handle.close().finally(() => process.exit(0));
-      };
-      process.on("SIGINT", () => shutdown("SIGINT"));
-      process.on("SIGTERM", () => shutdown("SIGTERM"));
-    })
-    .catch((err: Error) => {
-      console.error(`[sw4p-mcp-http] failed to start: ${err.message}`);
-      process.exit(1);
-    });
+/**
+ * CLI launcher. Pulled out of the top-level `if (isEntrypoint())` block so
+ * tests can drive it without going through `node`-process startup.
+ */
+async function runCli(): Promise<void> {
+  // `--version` / `-v` is a quick-exit path used by the entrypoint smoke
+  // tests: spawn the script, confirm it prints the version, exit 0 —
+  // without binding a port or touching the network. Keep this above any
+  // env validation so it works in dev environments where SW4P_API_KEY
+  // isn't set.
+  const args = process.argv.slice(2);
+  if (args.includes("--version") || args.includes("-v")) {
+    process.stdout.write(`${SW4P_KIT_VERSION}\n`);
+    process.exit(0);
+  }
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(
+      `sw4p-mcp-http ${SW4P_KIT_VERSION}\n` +
+        `\n` +
+        `Usage: sw4p-mcp-http\n` +
+        `\n` +
+        `Env:\n` +
+        `  SW4P_API_KEY            required for tool calls (or X-API-Key header per-request)\n` +
+        `  SW4P_API_URL            default https://api.sw4p.io\n` +
+        `  SW4P_NETWORK            mainnet | testnet (default testnet)\n` +
+        `  SW4P_MCP_HTTP_PORT      default 3939\n` +
+        `  AP2_SIGNING_KEY         optional, enables AP2 cart tools\n`
+    );
+    process.exit(0);
+  }
+
+  try {
+    const handle = await startHttpServer();
+    console.error(`[sw4p-mcp-http] listening on http://0.0.0.0:${handle.port}`);
+    const shutdown = (signal: string): void => {
+      console.error(`[sw4p-mcp-http] ${signal} received — shutting down`);
+      handle.close().finally(() => process.exit(0));
+    };
+    process.on("SIGINT", () => shutdown("SIGINT"));
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+  } catch (err) {
+    console.error(`[sw4p-mcp-http] failed to start: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+
+if (isEntrypoint()) {
+  await runCli();
 }
