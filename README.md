@@ -2,7 +2,7 @@
 
 **The agent surface for sw4p — internet-native settlement, agent-native.**
 
-`@sw4p/kit` lets any agent — Claude, Cursor, Eliza, Continue, your stack — settle cross-chain through [sw4p](https://sw4p.io) over every open agent payment standard: **MCP**, **x402 V2**, **AP2 Cart Mandates**, **A2A**, and **ERC-7683 intents**. Gasless on Solana via Kora 2.0. Production-backed by sw4p's settlement engine.
+`@sw4p/kit` lets any agent — Claude, Cursor, Eliza, Continue, your stack — settle cross-chain through [sw4p](https://sw4p.io) over every open agent payment standard: **MCP**, **x402 V2**, **AP2 Cart Mandates**, **A2A**, and **ERC-7683 intents**. Native USDC settlement, universal gas abstraction (pay gas in the asset you're moving — no chain-native tokens), backed by the sw4p settlement engine.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A518-43853d.svg)](https://nodejs.org)
@@ -19,14 +19,17 @@ MCPay and Latinum proved agents need to pay. **None of them handle what happens 
 
 ## Install
 
+> **Pre-publish.** `@sw4p/kit` is not yet on the public npm registry. Install from source until the v1.0 publish lands.
+
 ```bash
-npm install @sw4p/kit
+git clone https://github.com/Render-Network-OS/sw4p-kit
+cd sw4p-kit && npm install && npm run build
 ```
 
 ## Quickstart — MCP server
 
 ```bash
-SW4P_API_KEY=... npx sw4p-mcp
+SW4P_API_KEY=... node ./dist/mcp/bin.js
 ```
 
 Add to any MCP-capable client (Claude Code, Cursor, Continue, Zed, ElizaOS):
@@ -35,13 +38,15 @@ Add to any MCP-capable client (Claude Code, Cursor, Continue, Zed, ElizaOS):
 {
   "mcpServers": {
     "sw4p": {
-      "command": "npx",
-      "args": ["sw4p-mcp"],
+      "command": "node",
+      "args": ["<abs-path>/sw4p-kit/dist/mcp/bin.js"],
       "env": { "SW4P_API_KEY": "..." }
     }
   }
 }
 ```
+
+Once `@sw4p/kit` publishes to npm, the install collapses to `npm install @sw4p/kit` and the `args` line becomes `["sw4p-mcp"]` (via `npx`).
 
 The agent now sees **9 tools**: `sw4p.estimate`, `sw4p.settle`, `sw4p.status`, `sw4p.portfolio`, `sw4p.rebalance_plan`, `sw4p.rebalance_execute`, `sw4p.task` (MCP 2025-11-25 async primitive), plus `sw4p.ap2.cart_propose` and `sw4p.ap2.cart_execute` when a signer is configured.
 
@@ -49,7 +54,7 @@ The agent now sees **9 tools**: `sw4p.estimate`, `sw4p.settle`, `sw4p.status`, `
 
 | Import | What it does |
 |---|---|
-| `@sw4p/kit/core` | `SettlementClient`, Kora gasless helper (Token-2022 + signer types + policy hooks), error taxonomy, canonical `Intent`, `TaskStore` |
+| `@sw4p/kit/core` | `SettlementClient`, gas-abstraction helper (Token-2022 + signer types + policy hooks), error taxonomy, canonical `Intent`, `TaskStore` |
 | `@sw4p/kit/mcp` | MCP **2025-11-25** server — 9 tools, Tasks primitive for long-running settlement, stdio + Streamable HTTP |
 | `@sw4p/kit/x402` | x402 **V2** middleware (multi-network `accepts`), Discovery handler for Bazaar/x402scan, pay-then-retry client |
 | `@sw4p/kit/a2a` | A2A `PayRequest` / `PaySettled` / `PayFailed` types and handler |
@@ -64,8 +69,8 @@ The agent now sees **9 tools**: `sw4p.estimate`, `sw4p.settle`, `sw4p.status`, `
 | **x402 V2** | LF Foundation (Apr 2026) | Multi-network `accepts`, Discovery catalog ready for Bazaar / x402scan crawlers, `X-Sw4p-Settlement` correlation header |
 | **AP2 Cart Mandates** | Google + 60+ partners | **No official TS SDK exists** ([issue #67](https://github.com/google-agentic-commerce/AP2/issues/67)) — this is the open-source reference implementation |
 | **A2A** | Linux Foundation, v1.0 SDKs Apr 2026 | Drop-in payment-request handler |
-| **ERC-7683** | 88% of Across volume | Compatible intent builder; pairs with Across V4 + OIF |
-| **Kora 2.0** | Solana Foundation canonical | Turnkey/Privy signer types, Token-2022 extension policy hooks |
+| **ERC-7683** | Industry intent standard | Compatible intent builder; pairs with the sw4p engine's intent surface |
+| **Universal gas abstraction** | sw4p engine | Pay gas in the asset being moved on every supported chain — never in chain-native tokens |
 
 ## Programmatic usage
 
@@ -118,7 +123,7 @@ All tests green:
                   │
             sw4p settlement engine
                   │
-   CCTP V2 · Kora · Jupiter · Hyperlane · Wormhole · Allbridge
+   native USDC · USDT corridor · universal gas abstraction · intent-based (roadmap)
 ```
 
 ## Roadmap
