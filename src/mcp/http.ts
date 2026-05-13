@@ -41,6 +41,34 @@ import { buildSdkClient, type SdkClient } from "./_sdk-client.js";
 /** Package version, surfaced via `--version` for smoke tests and ops checks. */
 const SW4P_KIT_VERSION = "0.1.0";
 
+/**
+ * SDK upstream-gap adapter: convert a `StreamableHTTPServerTransport`
+ * (concrete class instance) into the shape `mcp.connect()` accepts
+ * (`Transport` interface). At runtime the class IS a Transport
+ * implementation; at type-check time the SDK's `.d.ts` declares
+ * `Transport.onmessage?: F` (optional-via-`?:`) while the class's
+ * `get onmessage(): F | undefined` returns the explicit-undefined form.
+ * Under `exactOptionalPropertyTypes: true` those are not structurally
+ * compatible, so a direct assignment fails.
+ *
+ * Centralising the cast in this single helper means: (a) the gap is
+ * documented in exactly one place; (b) when the SDK fixes its
+ * `.d.ts`, we delete this function and let TypeScript point to every
+ * call site; (c) any future caller can't accidentally pass an
+ * unrelated value as a `Transport` — the parameter type pins them.
+ *
+ * Tracking: file an upstream issue with `@modelcontextprotocol/sdk`
+ * if one doesn't exist yet. Once the class getters drop `| undefined`
+ * (or the interface adopts it), this function becomes a no-op and can
+ * be removed.
+ */
+function intoMcpTransport(t: StreamableHTTPServerTransport): Transport {
+  // The cast goes through `unknown` because TypeScript refuses the
+  // direct cast under `exactOptionalPropertyTypes: true`. This is the
+  // narrowest scope we can give it.
+  return t as unknown as Transport;
+}
+
 export interface HttpServerOptions {
   port?: number;
   hostname?: string;
@@ -106,7 +134,9 @@ function buildMcp(opts: {
   sdkClientFactory?: (apiKey: string) => SdkClient;
 }): McpServer {
   const sdkClient = (opts.sdkClientFactory ?? ((key) => buildSdkClient({ apiUrl: opts.apiUrl, apiKey: key, network: opts.network })))(opts.apiKey);
-  const client = new SettlementClient({ sdk: sdkClient as never });
+  // `SdkClient` and `SdkLike` are structurally identical (same six
+  // methods, same signatures); the assignment is type-safe.
+  const client = new SettlementClient({ sdk: sdkClient });
 
   const serverOpts: ServerOptions = {
     client,
@@ -265,18 +295,12 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
         mcp.close().catch(() => undefined);
       });
 
-      // SDK upstream gap: the exported `Transport` interface declares
-      // `onmessage?: (...) => void` (etc.) WITHOUT `| undefined` while
-      // `StreamableHTTPServerTransport`'s property accessors return
-      // `... | undefined` due to `exactOptionalPropertyTypes: true`.
-      // The class IS the intended Transport implementation at runtime —
-      // this is a TypeScript-strictness gap in the SDK's `.d.ts`.
-      // Cast through the named `Transport` interface so the structural
-      // boundary is explicit and a future SDK release that fixes its
-      // optional-property declarations will let us drop the cast in
-      // one obvious place.
-      const transportAsConnectArg = transport as unknown as Transport;
-      await mcp.connect(transportAsConnectArg);
+      // Use the centralised `intoMcpTransport` adapter — the cast and
+      // its SDK-gap justification live in one place at the top of
+      // this file. When the SDK fixes its `.d.ts`, we delete the
+      // helper and let TypeScript point to every call site that
+      // needs an update.
+      await mcp.connect(intoMcpTransport(transport));
       await transport.handleRequest(req, res, body);
     } catch (err) {
       // Surface the upstream `SdkHttpError` cleanly — its `.message`
