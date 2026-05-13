@@ -22,10 +22,17 @@ import { realIO, type CliIO } from "./_io.js";
 const HELP_TEXT = `sw4p-kit-init — interactive setup for the sw4p agent surface.
 
 Usage:
-  npx @sw4p/kit init           # interactive setup
+  npx @sw4p/kit init [flags]   # interactive setup
   node ./dist/cli/init.js      # pre-publish form
   sw4p-kit-init --help         # print this message
   sw4p-kit-init --version      # print version
+
+Flags:
+  --project    Force project-local registration in <cwd>/.mcp.json regardless
+               of whether the file exists. Creates it if absent.
+  --user-only  Skip the project-local detection step even when <cwd>/.mcp.json
+               exists. Useful for scripted CI runs that should never touch the
+               working directory. Mutually exclusive with --project.
 
 What it does:
   - Detects supported agent platforms (Claude Code, Cursor, Continue, Goose,
@@ -37,6 +44,9 @@ What it does:
   - Never overwrites an existing "sw4p" entry without confirmation.
   - For platforms whose config shape we don't auto-mutate (YAML/TOML/Eliza),
     prints a paste-ready snippet instead.
+  - For Claude Code: writes to ~/.claude.json (the canonical user-level MCP
+    config). When <cwd>/.mcp.json exists OR --project is passed, also offers
+    to register the project-local entry.
 
 Get an API key: https://console.sw4p.io
 `;
@@ -75,7 +85,21 @@ export interface RunInitOptions {
   home: string;
   cwd: string;
   env: InitEnv;
+  /**
+   * CLI argv after the binary name (defaults to []). Recognized flags:
+   *   --project    force project-local <cwd>/.mcp.json write regardless of
+   *                whether the file exists.
+   *   --user-only  suppress the project-local prompt even when .mcp.json is
+   *                present (useful for scripted runs).
+   * Passing both is rejected at the top of runInit with a non-zero exit.
+   */
+  args?: string[];
   now?: () => Date;
+}
+
+export interface InitFlags {
+  project: boolean;
+  userOnly: boolean;
 }
 
 export interface InitResult {
@@ -85,6 +109,22 @@ export interface InitResult {
   // Each platform we either wrote to, skipped, or printed manual instructions
   // for. Useful for tests and for the final summary line.
   actions: PlatformAction[];
+  /** Non-zero when runInit returned early due to a flag error. */
+  exitCode?: number;
+  /** Error message when runInit returned early; undefined on success. */
+  error?: string;
+}
+
+/**
+ * Parse the CLI argv slice for the two scope flags. Unknown args are ignored
+ * here (the binary's `--help` / `--version` path handles those before
+ * delegating to runInit).
+ */
+export function parseInitFlags(argv: readonly string[]): InitFlags {
+  return {
+    project: argv.includes("--project"),
+    userOnly: argv.includes("--user-only"),
+  };
 }
 
 export type PlatformAction =
@@ -101,6 +141,21 @@ export type PlatformAction =
 export async function runInit(opts: RunInitOptions): Promise<InitResult> {
   const { io, fs: fsx, home, cwd, env } = opts;
   const now = opts.now ?? (() => new Date());
+  const flags = parseInitFlags(opts.args ?? []);
+
+  // Mutually-exclusive scope flags: surface immediately, do nothing else.
+  if (flags.project && flags.userOnly) {
+    const error = "--project and --user-only are mutually exclusive";
+    io.warn(`sw4p-kit-init: ${error}`);
+    return {
+      apiKey: "",
+      network: "testnet",
+      detected: [],
+      actions: [],
+      exitCode: 2,
+      error,
+    };
+  }
 
   io.print("\nsw4p-kit-init — setting up the sw4p agent surface.");
   io.print(
@@ -324,6 +379,7 @@ async function main(argv: string[]): Promise<number> {
       fs: nodeFs(),
       home: os.homedir(),
       cwd: process.cwd(),
+      args: argv,
       env: {
         apiKey: process.env.SW4P_API_KEY,
         network: process.env.SW4P_NETWORK,
@@ -331,7 +387,8 @@ async function main(argv: string[]): Promise<number> {
         walletSolana: process.env.SW4P_USER_WALLET_SOLANA,
       },
     });
-    return result.actions.some((a) => a.kind === "wrote" || a.kind === "replaced") ? 0 : 0;
+    if (result.exitCode !== undefined && result.exitCode !== 0) return result.exitCode;
+    return 0;
   } catch (err) {
     process.stderr.write(`sw4p-kit-init failed: ${stringifyErr(err)}\n`);
     return 1;

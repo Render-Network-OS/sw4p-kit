@@ -328,4 +328,23 @@ describe("runInit", () => {
     expect(all).toContain("No supported agent platforms detected");
     expect(all).toContain('"sw4p"');
   });
+
+  it("rejects --project and --user-only together with a non-zero exit", async () => {
+    const fs = memFs({});
+    const io = scriptedIO({ answers: [], secrets: [], confirms: [] });
+    const result = await runInit({
+      io,
+      fs,
+      home,
+      cwd,
+      env: {},
+      args: ["--project", "--user-only"],
+      now: () => FROZEN_TIME,
+    });
+    expect(result.error).toMatch(/mutually exclusive/i);
+    expect(result.exitCode).not.toBe(0);
+    // No filesystem touched, no prompts answered.
+    expect(fs.writes).toEqual([]);
+    expect(fs.copies).toEqual([]);
+  });
 });
