@@ -245,8 +245,10 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
       // `enableJsonResponse: true` so the response is a plain JSON envelope
       // rather than an SSE stream — that's what gateway/curl callers expect
       // for one-shot RPC.
-      // Cast to `any` is necessary because the SDK's optional-properties
-      // types interact badly with `exactOptionalPropertyTypes: true`.
+      // Cast to `never` (not `any`) is necessary because the SDK's options
+      // shape interacts badly with `exactOptionalPropertyTypes: true` —
+      // `never` coerces the literal through TypeScript's structural check
+      // without widening the resulting reference type.
       const transport = new StreamableHTTPServerTransport({
         enableJsonResponse: true,
       } as never);
@@ -256,10 +258,23 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
         mcp.close().catch(() => undefined);
       });
 
+      // Same `exactOptionalPropertyTypes` reason for the cast: the SDK's
+      // exported `Transport` interface has `onmessage?` (etc.) typed
+      // without `| undefined` while `StreamableHTTPServerTransport`'s
+      // getters return `... | undefined`. The class IS the SDK's
+      // intended transport — the runtime is correct; this is a
+      // TypeScript-strictness gap in the SDK's own types.
       await mcp.connect(transport as never);
       await transport.handleRequest(req, res, body);
     } catch (err) {
-      writeJsonError(res, 500, `Internal error: ${(err as Error).message}`);
+      // Surface the upstream `SdkHttpError` cleanly — its `.message`
+      // is populated (Track B7 Important #3); other errors fall back
+      // to `String(err)` which is at least non-empty.
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : String(err) || "unknown error";
+      writeJsonError(res, 500, `Internal error: ${message}`);
     }
   });
 

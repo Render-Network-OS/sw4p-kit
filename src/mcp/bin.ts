@@ -56,6 +56,14 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   })),
 }));
 
+// NOTE — error-surface asymmetry across transports: this stdio handler
+// lets tool errors propagate as transport-level JSON-RPC errors (the
+// MCP SDK converts thrown Errors to `-32000`). The Streamable HTTP
+// transport (`http.ts:135`) wraps the same call in a try/catch and
+// returns `{isError:true, content:[...]}` per the MCP `CallToolResult`
+// spec, because hosted-gateway agents need to render the error as a
+// tool result rather than a transport failure. If you build a third
+// transport, mirror http.ts's pattern.
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const result = await kit.callTool(req.params.name, req.params.arguments ?? {});
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
