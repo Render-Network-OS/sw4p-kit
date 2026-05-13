@@ -49,6 +49,27 @@ platforms whose config is YAML/TOML/custom (Goose, Codex CLI, Continue,
 Aider, ElizaOS) the CLI prints a paste-ready snippet instead of mutating
 the file.
 
+### Claude Code: user-level vs project-local
+
+Claude Code reads MCP server registrations from two places:
+
+- **`~/.claude.json`** — your user-level config. `init` always writes here
+  when you opt into Claude Code (the default behavior).
+- **`<cwd>/.mcp.json`** — project-local, commit-able, team-shareable. `init`
+  offers to register here _only when_ `<cwd>/.mcp.json` already exists in
+  the directory you ran the command from, so the prompt stays quiet for
+  directories that aren't a project context.
+
+Two flags drive scripted use:
+
+- `--project` — force project-local registration regardless of whether
+  `<cwd>/.mcp.json` exists. Creates the file if absent.
+- `--user-only` — skip the project-local detection step even when
+  `<cwd>/.mcp.json` exists. Useful for CI runs that should never touch the
+  working directory.
+
+Passing both errors out with exit code 2 (mutually exclusive).
+
 > **Pre-publish:** invoke via `node ./dist/cli/init.js` and
 > `node ./dist/cli/doctor.js` until v1.0 ships on npm.
 
