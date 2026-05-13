@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import * as path from "node:path";
-import { runDoctor, type DoctorFs, type FetchLike } from "../../cli/doctor.js";
+import {
+  runDoctor,
+  parseDoctorFlags,
+  type DoctorFs,
+  type FetchLike,
+} from "../../cli/doctor.js";
 
 interface MemFs extends DoctorFs {
   files: Map<string, string>;
@@ -343,6 +348,54 @@ describe("runDoctor", () => {
     expect(elapsed).toBeLessThan(2000);
   });
 
+  it("warns and falls back to default when --timeout=0 is passed", async () => {
+    // Track C1/C2 Minor: silent fallback was misleading. Zero is treated
+    // as invalid (AbortSignal.timeout(0) aborts immediately, which would
+    // make every network check fail), so doctor warns and uses the
+    // default timeout.
+    const io = recordingIO();
+    const fs = memFs({});
+    const { fetch } = fakeFetch(() => ({ ok: true, status: 200, body: "ok" }));
+
+    const result = await runDoctor({
+      io,
+      fs,
+      fetch,
+      home,
+      cwd,
+      env: { apiKey: "k", network: "testnet" },
+      kitVersion: "0.1.0",
+      sdkVersion: "unpublished",
+      args: ["--timeout=0"],
+    });
+
+    // Warning surfaced.
+    expect(io.warnings.some((w) => w.includes("--timeout=0"))).toBe(true);
+    // Doctor still ran successfully with the default timeout.
+    expect(result.exitCode).toBe(0);
+    expect(result.checks.find((c) => c.name === "network")?.status).toBe("pass");
+  });
+
+  it("warns and falls back to default when --timeout=abc is passed", async () => {
+    const io = recordingIO();
+    const fs = memFs({});
+    const { fetch } = fakeFetch(() => ({ ok: true, status: 200, body: "ok" }));
+
+    await runDoctor({
+      io,
+      fs,
+      fetch,
+      home,
+      cwd,
+      env: { apiKey: "k", network: "testnet" },
+      kitVersion: "0.1.0",
+      sdkVersion: "unpublished",
+      args: ["--timeout=abc"],
+    });
+
+    expect(io.warnings.some((w) => w.includes("--timeout=abc"))).toBe(true);
+  });
+
   it("passes AbortSignal to fetch for both network and auth checks", async () => {
     const io = recordingIO();
     const fs = memFs({});
@@ -393,5 +446,48 @@ describe("runDoctor", () => {
     expect(
       result.checks.some((c) => c.name.includes("project-local .mcp.json"))
     ).toBe(false);
+  });
+});
+
+describe("parseDoctorFlags", () => {
+  it("returns the default timeout and no warnings when no flags are supplied", () => {
+    const flags = parseDoctorFlags([]);
+    expect(flags.timeoutMs).toBeGreaterThan(0);
+    expect(flags.parseWarnings).toEqual([]);
+  });
+
+  it("accepts a positive integer --timeout value", () => {
+    const flags = parseDoctorFlags(["--timeout=2500"]);
+    expect(flags.timeoutMs).toBe(2500);
+    expect(flags.parseWarnings).toEqual([]);
+  });
+
+  it("rejects --timeout=0 with a warning (would abort every fetch instantly)", () => {
+    const flags = parseDoctorFlags(["--timeout=0"]);
+    expect(flags.parseWarnings).toHaveLength(1);
+    expect(flags.parseWarnings[0]).toContain("--timeout=0");
+    // timeoutMs MUST stay positive — the default — so AbortSignal.timeout
+    // doesn't abort instantly.
+    expect(flags.timeoutMs).toBeGreaterThan(0);
+  });
+
+  it("rejects --timeout=-5 with a warning", () => {
+    const flags = parseDoctorFlags(["--timeout=-5"]);
+    expect(flags.parseWarnings).toHaveLength(1);
+    expect(flags.parseWarnings[0]).toContain("--timeout=-5");
+    expect(flags.timeoutMs).toBeGreaterThan(0);
+  });
+
+  it("rejects --timeout=abc with a warning", () => {
+    const flags = parseDoctorFlags(["--timeout=abc"]);
+    expect(flags.parseWarnings).toHaveLength(1);
+    expect(flags.parseWarnings[0]).toContain("--timeout=abc");
+    expect(flags.timeoutMs).toBeGreaterThan(0);
+  });
+
+  it("rejects --timeout= (empty value) with a warning", () => {
+    const flags = parseDoctorFlags(["--timeout="]);
+    expect(flags.parseWarnings).toHaveLength(1);
+    expect(flags.timeoutMs).toBeGreaterThan(0);
   });
 });

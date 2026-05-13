@@ -30,7 +30,9 @@ Flags:
                    auth checks (default: 5000). Use this in CI to fail fast
                    instead of inheriting Node fetch's ~300s default. Both
                    the /health probe and the API-key check honor the same
-                   budget independently.
+                   budget independently. Must be a positive integer; zero,
+                   negative, or non-numeric values are rejected with a
+                   warning and the default is used instead.
 
 Checks performed:
   - Kit version (this package).
@@ -97,23 +99,48 @@ export interface DoctorOptions {
 export interface DoctorFlags {
   /** Per-fetch timeout in ms. Defaults to DEFAULT_FETCH_TIMEOUT_MS. */
   timeoutMs: number;
+  /**
+   * Human-readable warnings produced during flag parsing. `runDoctor` is
+   * responsible for surfacing these via `io.warn` so the user knows their
+   * invalid input was rejected (e.g. `--timeout=0`, `--timeout=abc`).
+   *
+   * Tracked separately from `timeoutMs` to keep `parseDoctorFlags` pure
+   * (testable without an IO seam) while still giving `runDoctor` enough
+   * information to be loud about user mistakes.
+   */
+  parseWarnings: readonly string[];
 }
 
 /**
  * Parse the CLI argv slice for the doctor's flags. Invalid / unparseable
- * --timeout values fall back to DEFAULT_FETCH_TIMEOUT_MS rather than failing
- * the entire run; doctor is a diagnostic, so we'd rather complete with the
- * default than refuse to start.
+ * `--timeout` values fall back to DEFAULT_FETCH_TIMEOUT_MS rather than
+ * failing the entire run — doctor is a diagnostic, so we'd rather complete
+ * with the default than refuse to start.
+ *
+ * Track C1/C2 Minor: silent fallback was previously misleading. If the user
+ * typed `--timeout=0`, `--timeout=-5`, or `--timeout=abc` we now record a
+ * `parseWarnings` entry so `runDoctor` surfaces it before any check runs.
+ * Zero is treated as invalid (rather than "disable timeout") because
+ * `AbortSignal.timeout(0)` aborts immediately, which would make every
+ * network check fail with a non-obvious symptom.
  */
 export function parseDoctorFlags(argv: readonly string[]): DoctorFlags {
   let timeoutMs = DEFAULT_FETCH_TIMEOUT_MS;
+  const parseWarnings: string[] = [];
   for (const a of argv) {
     if (a.startsWith("--timeout=")) {
-      const v = Number(a.slice("--timeout=".length));
-      if (Number.isFinite(v) && v > 0) timeoutMs = v;
+      const rawValue = a.slice("--timeout=".length);
+      const v = Number(rawValue);
+      if (Number.isFinite(v) && v > 0) {
+        timeoutMs = v;
+      } else {
+        parseWarnings.push(
+          `Ignoring --timeout=${rawValue}: value must be a positive number of milliseconds. Falling back to ${DEFAULT_FETCH_TIMEOUT_MS}ms.`,
+        );
+      }
     }
   }
-  return { timeoutMs };
+  return { timeoutMs, parseWarnings };
 }
 
 export type CheckStatus = "pass" | "fail" | "warn";
@@ -134,6 +161,12 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
   const { io, fs: fsx, fetch: fetchImpl, home, cwd, env } = opts;
   const flags = parseDoctorFlags(opts.args ?? []);
   const checks: CheckResult[] = [];
+
+  // Surface any flag-parse warnings BEFORE the banner so they're visible
+  // even when the rest of the output is voluminous.
+  for (const w of flags.parseWarnings) {
+    io.warn(`sw4p-kit-doctor: ${w}`);
+  }
 
   io.print("sw4p-kit-doctor — running checks...\n");
 
