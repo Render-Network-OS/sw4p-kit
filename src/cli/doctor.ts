@@ -25,6 +25,13 @@ Usage:
   sw4p-kit-doctor --help       # this message
   sw4p-kit-doctor --version    # version
 
+Flags:
+  --timeout=<ms>   Per-fetch timeout in milliseconds for the network and
+                   auth checks (default: 5000). Use this in CI to fail fast
+                   instead of inheriting Node fetch's ~300s default. Both
+                   the /health probe and the API-key check honor the same
+                   budget independently.
+
 Checks performed:
   - Kit version (this package).
   - Linked @sw4p/sdk version (or "pinned-local" / "unpublished").
@@ -35,6 +42,9 @@ Checks performed:
 Exit code: 0 on all-pass, 1 otherwise. The final line is a single
 machine-readable summary: SW4P-KIT-DOCTOR: <ok|fail> (...)
 `;
+
+/** Default per-fetch timeout for doctor's network checks, in milliseconds. */
+export const DEFAULT_FETCH_TIMEOUT_MS = 5000;
 
 export interface DoctorEnv {
   apiUrl?: string | undefined;
@@ -49,7 +59,11 @@ export interface DoctorIO {
 
 export type FetchLike = (
   input: string,
-  init?: { headers?: Record<string, string>; method?: string }
+  init?: {
+    headers?: Record<string, string>;
+    method?: string;
+    signal?: AbortSignal;
+  }
 ) => Promise<{
   ok: boolean;
   status: number;
@@ -70,6 +84,36 @@ export interface DoctorOptions {
   env: DoctorEnv;
   kitVersion: string;
   sdkVersion: string;
+  /**
+   * CLI argv after the binary name. Recognized flag:
+   *   --timeout=<ms>   per-fetch timeout for /health and the auth check
+   *                    (default: DEFAULT_FETCH_TIMEOUT_MS).
+   * Unknown args are ignored (the binary's `--help` / `--version` path
+   * handles those before delegating to runDoctor).
+   */
+  args?: readonly string[];
+}
+
+export interface DoctorFlags {
+  /** Per-fetch timeout in ms. Defaults to DEFAULT_FETCH_TIMEOUT_MS. */
+  timeoutMs: number;
+}
+
+/**
+ * Parse the CLI argv slice for the doctor's flags. Invalid / unparseable
+ * --timeout values fall back to DEFAULT_FETCH_TIMEOUT_MS rather than failing
+ * the entire run; doctor is a diagnostic, so we'd rather complete with the
+ * default than refuse to start.
+ */
+export function parseDoctorFlags(argv: readonly string[]): DoctorFlags {
+  let timeoutMs = DEFAULT_FETCH_TIMEOUT_MS;
+  for (const a of argv) {
+    if (a.startsWith("--timeout=")) {
+      const v = Number(a.slice("--timeout=".length));
+      if (Number.isFinite(v) && v > 0) timeoutMs = v;
+    }
+  }
+  return { timeoutMs };
 }
 
 export type CheckStatus = "pass" | "fail" | "warn";
@@ -88,6 +132,7 @@ export interface DoctorResult {
 
 export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
   const { io, fs: fsx, fetch: fetchImpl, home, cwd, env } = opts;
+  const flags = parseDoctorFlags(opts.args ?? []);
   const checks: CheckResult[] = [];
 
   io.print("sw4p-kit-doctor — running checks...\n");
@@ -112,7 +157,10 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
   // 3. Network reachability
   const apiUrl = (env.apiUrl ?? "https://api.sw4p.io").replace(/\/+$/, "");
   try {
-    const r = await fetchImpl(`${apiUrl}/health`, { method: "GET" });
+    const r = await fetchImpl(`${apiUrl}/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(flags.timeoutMs),
+    });
     const body = await safeText(r);
     if (r.ok) {
       checks.push({
@@ -154,6 +202,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
           "X-API-Key": apiKey,
           "X-SW4P-Network": network,
         },
+        signal: AbortSignal.timeout(flags.timeoutMs),
       });
       const body = await safeText(r);
       if (r.status === 200) {
@@ -399,6 +448,7 @@ async function main(argv: string[]): Promise<number> {
     fetch: fetchImpl,
     home: os.homedir(),
     cwd: process.cwd(),
+    args: argv,
     env: {
       apiUrl: process.env.SW4P_API_URL,
       apiKey: process.env.SW4P_API_KEY,

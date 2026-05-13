@@ -298,6 +298,77 @@ describe("runDoctor", () => {
     expect(projectCheck!.detail).toContain(projectPath);
   });
 
+  it("respects --timeout flag for network checks (does not hang on slow fetch)", async () => {
+    const io = recordingIO();
+    const fs = memFs({});
+    const calls: FakeCall[] = [];
+    // Fetch that hangs forever unless aborted; AbortSignal.timeout(ms) fires a
+    // DOMException("...","TimeoutError") which we honor by rejecting.
+    const slowFetch: FetchLike = (url, init) => {
+      calls.push({ url, ...(init?.headers ? { headers: init.headers } : {}) });
+      return new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal) {
+          if (signal.aborted) {
+            reject(new DOMException("Timeout", "TimeoutError"));
+            return;
+          }
+          signal.addEventListener("abort", () => {
+            reject(new DOMException("Timeout", "TimeoutError"));
+          });
+        }
+        // Never resolves on its own.
+      });
+    };
+
+    const start = Date.now();
+    const result = await runDoctor({
+      io,
+      fs,
+      fetch: slowFetch,
+      home,
+      cwd,
+      env: { apiKey: "k", network: "testnet" },
+      kitVersion: "0.1.0",
+      sdkVersion: "unpublished",
+      args: ["--timeout=20"], // 20ms — well under default 5000ms
+    });
+    const elapsed = Date.now() - start;
+
+    expect(result.exitCode).toBe(1);
+    const net = result.checks.find((c) => c.name === "network")!;
+    expect(net.status).toBe("fail");
+    expect(net.detail.toLowerCase()).toMatch(/timeout|abort/);
+    // Sanity: doctor should not have hung anywhere near the default 5s.
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  it("passes AbortSignal to fetch for both network and auth checks", async () => {
+    const io = recordingIO();
+    const fs = memFs({});
+    const signalsSeen: Array<AbortSignal | undefined> = [];
+    const recordingFetch: FetchLike = async (_url, init) => {
+      signalsSeen.push(init?.signal);
+      return { ok: true, status: 200, text: async () => "ok" };
+    };
+
+    await runDoctor({
+      io,
+      fs,
+      fetch: recordingFetch,
+      home,
+      cwd,
+      env: { apiKey: "k", network: "testnet" },
+      kitVersion: "0.1.0",
+      sdkVersion: "unpublished",
+    });
+
+    // Two fetch calls: /health and /sdk/v1/portfolio/test. Both must carry a signal.
+    expect(signalsSeen).toHaveLength(2);
+    expect(signalsSeen[0]).toBeInstanceOf(AbortSignal);
+    expect(signalsSeen[1]).toBeInstanceOf(AbortSignal);
+  });
+
   it("omits the project-local check entirely when <cwd>/.mcp.json is absent", async () => {
     const io = recordingIO();
     const claudePath = path.join(home, ".claude.json");
