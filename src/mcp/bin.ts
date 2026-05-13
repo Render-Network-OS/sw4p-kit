@@ -5,22 +5,21 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { createServer } from "./server.js";
 import { SettlementClient } from "../core/client.js";
 import { HmacSigner } from "../ap2/mandate.js";
-import { SolanaDevnetAdapter } from "./solana-devnet.js";
-import { BaseSepoliaAdapter } from "./base-sepolia.js";
 
 const SW4P_API_URL = process.env.SW4P_API_URL ?? "https://api.sw4p.io";
 const SW4P_API_KEY = process.env.SW4P_API_KEY;
+const SW4P_NETWORK = (process.env.SW4P_NETWORK ?? "testnet") as "mainnet" | "testnet";
 const AP2_SIGNING_KEY = process.env.AP2_SIGNING_KEY;
-const SOLANA_DEVNET_PRIVATE_KEY = process.env.SOLANA_DEVNET_PRIVATE_KEY;
-const SOLANA_DEVNET_RPC_URL = process.env.SOLANA_DEVNET_RPC_URL ?? "https://api.devnet.solana.com";
-const BASE_SEPOLIA_PRIVATE_KEY = process.env.BASE_SEPOLIA_PRIVATE_KEY;
-const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org";
-const SW4P_CCTP_MINT_BIN = process.env.SW4P_CCTP_MINT_BIN;
-const SW4P_CCTP_BURN_SOLANA_BIN = process.env.SW4P_CCTP_BURN_SOLANA_BIN;
-const SOLANA_RELAYER_PRIVATE_KEY = process.env.SOLANA_RELAYER_PRIVATE_KEY ?? process.env.SOLANA_DEVNET_PRIVATE_KEY;
+const SW4P_USER_WALLET_BASE = process.env.SW4P_USER_WALLET_BASE;
+const SW4P_USER_WALLET_SOLANA = process.env.SW4P_USER_WALLET_SOLANA;
 
 if (!SW4P_API_KEY) {
   console.error("SW4P_API_KEY is required");
+  process.exit(1);
+}
+
+if (SW4P_NETWORK !== "mainnet" && SW4P_NETWORK !== "testnet") {
+  console.error(`SW4P_NETWORK must be "mainnet" or "testnet"; got "${SW4P_NETWORK as string}"`);
   process.exit(1);
 }
 
@@ -29,53 +28,43 @@ async function asJson<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-const authHeaders = { "Content-Type": "application/json", "X-API-Key": SW4P_API_KEY };
+const writeHeaders = {
+  "Content-Type": "application/json",
+  "X-API-Key": SW4P_API_KEY,
+  "X-SW4P-Network": SW4P_NETWORK,
+};
+
+const readHeaders = {
+  "X-API-Key": SW4P_API_KEY,
+  "X-SW4P-Network": SW4P_NETWORK,
+};
 
 const sdkClient = {
   estimate: (p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/estimate`, { method: "POST", headers: authHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ feeBps: number; route: string; outputAmount: string }>,
+    fetch(`${SW4P_API_URL}/sdk/v1/estimate`, { method: "POST", headers: writeHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ feeBps: number; route: string; outputAmount: string }>,
   transfer: (p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/transfer`, { method: "POST", headers: authHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ intentId: string; status: string }>,
+    fetch(`${SW4P_API_URL}/sdk/v1/transfer`, { method: "POST", headers: writeHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ intentId: string; status: string }>,
   status: (id: string) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/status/${encodeURIComponent(id)}`, { headers: { "X-API-Key": SW4P_API_KEY } }).then(asJson) as Promise<{ intentId: string; state: string }>,
+    fetch(`${SW4P_API_URL}/sdk/v1/status/${encodeURIComponent(id)}`, { headers: readHeaders }).then(asJson) as Promise<{ intentId: string; state: string }>,
   getPortfolio: (addr: string) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/portfolio/${encodeURIComponent(addr)}`, { headers: { "X-API-Key": SW4P_API_KEY } }).then(asJson),
+    fetch(`${SW4P_API_URL}/sdk/v1/portfolio/${encodeURIComponent(addr)}`, { headers: readHeaders }).then(asJson),
   planRebalance: (addr: string, p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/rebalance/plan`, { method: "POST", headers: authHeaders, body: JSON.stringify({ walletAddress: addr, ...(p as object) }) }).then(asJson),
+    fetch(`${SW4P_API_URL}/sdk/v1/rebalance/plan`, { method: "POST", headers: writeHeaders, body: JSON.stringify({ walletAddress: addr, ...(p as object) }) }).then(asJson),
   executeRebalance: (plan: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/rebalance/execute`, { method: "POST", headers: authHeaders, body: JSON.stringify(plan) }).then(asJson)
+    fetch(`${SW4P_API_URL}/sdk/v1/rebalance/execute`, { method: "POST", headers: writeHeaders, body: JSON.stringify(plan) }).then(asJson),
 };
 
 const client = new SettlementClient({ sdk: sdkClient as never });
 const signer = AP2_SIGNING_KEY ? new HmacSigner(AP2_SIGNING_KEY) : undefined;
-const solana = SOLANA_DEVNET_PRIVATE_KEY
-  ? new SolanaDevnetAdapter({ privateKey: SOLANA_DEVNET_PRIVATE_KEY, rpcUrl: SOLANA_DEVNET_RPC_URL })
-  : undefined;
-const base = BASE_SEPOLIA_PRIVATE_KEY
-  ? new BaseSepoliaAdapter({ privateKey: BASE_SEPOLIA_PRIVATE_KEY, rpcUrl: BASE_SEPOLIA_RPC_URL })
-  : undefined;
-const cctpMint =
-  SW4P_CCTP_MINT_BIN && SOLANA_RELAYER_PRIVATE_KEY
-    ? {
-        binaryPath: SW4P_CCTP_MINT_BIN,
-        solanaRpcUrl: SOLANA_DEVNET_RPC_URL,
-        relayerPrivateKey: SOLANA_RELAYER_PRIVATE_KEY,
-      }
-    : undefined;
-const cctpBurnSolana =
-  SW4P_CCTP_BURN_SOLANA_BIN && SOLANA_RELAYER_PRIVATE_KEY
-    ? {
-        binaryPath: SW4P_CCTP_BURN_SOLANA_BIN,
-        solanaRpcUrl: SOLANA_DEVNET_RPC_URL,
-        relayerPrivateKey: SOLANA_RELAYER_PRIVATE_KEY,
-      }
-    : undefined;
+
+const defaultWallets: { base?: string; solana?: string } = {};
+if (SW4P_USER_WALLET_BASE) defaultWallets.base = SW4P_USER_WALLET_BASE;
+if (SW4P_USER_WALLET_SOLANA) defaultWallets.solana = SW4P_USER_WALLET_SOLANA;
+
 const serverOpts: Parameters<typeof createServer>[0] = { client };
 if (signer) serverOpts.signer = signer;
-if (solana) serverOpts.solana = solana;
-if (base) serverOpts.base = base;
-if (cctpMint) serverOpts.cctpMint = cctpMint;
-if (cctpBurnSolana) (serverOpts as never as { cctpBurnSolana: typeof cctpBurnSolana }).cctpBurnSolana = cctpBurnSolana;
+if (defaultWallets.base || defaultWallets.solana) serverOpts.defaultWallets = defaultWallets;
+
 const kit = createServer(serverOpts);
 
 const mcp = new Server(
@@ -87,8 +76,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: kit.listTools().map((t) => ({
     name: t.name,
     description: t.description,
-    inputSchema: { type: "object" }
-  }))
+    inputSchema: { type: "object" },
+  })),
 }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {

@@ -1,331 +1,316 @@
 /**
- * Frontier agent surface — what the AI actually sees and uses.
+ * Frontier agent surface — what an AI actually sees and uses.
  *
  * Two tools cover 90% of agent intent:
  *
  *   sw4p.balance        — "what USDC do I have?"
  *   sw4p.send           — "send 0.5 USDC to <address>"
  *
- * The agent never sees chains, rails, attestation polling, ATA derivation,
- * CCTP V2 mechanics, or domain IDs. That's the kit's job to handle. Address
- * format determines destination chain (EVM 0x… → Base, Solana base58 → Solana).
- * Source chain is whichever has the funds to cover the spend.
+ * The agent never sees chains, rails, attestation polling, or settlement
+ * mechanics. The protocol owns all of that server-side; the kit is a thin
+ * client over the sw4p HTTP API.
  *
- * In production, sw4p.send submits to the sw4p settlement engine, whose
- * watcher orchestrates everything. The kit's local orchestration here is the
- * same code path exposed for testing and self-hosted demos.
+ * Wallet-address resolution (B12):
+ *   1. Explicit tool argument (`walletAddress` / `fromAddress`) wins.
+ *   2. Otherwise the server-injected `defaultWallets` map (populated from
+ *      `SW4P_USER_WALLET_BASE` / `SW4P_USER_WALLET_SOLANA` in bin.ts) is used.
+ *   3. If neither is available, the tool throws with a message naming both
+ *      the argument and the env var, so the caller knows how to fix it.
  */
 
 import { z } from "zod";
-import type { SolanaDevnetAdapter } from "../solana-devnet.js";
-import type { BaseSepoliaAdapter } from "../base-sepolia.js";
+import type { SettlementClient } from "../../core/client.js";
 
 const EVM_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
-const BalanceInputSchema = z.object({});
-
-const SendInputSchema = z.object({
-  amount: z.string().regex(/^\d+(\.\d+)?$/, "amount must be a positive decimal"),
-  recipient: z.string().min(32),
-  from: z.enum(["auto", "solana", "base"]).optional(),
-  note: z.string().optional(),
-});
+type Chain = "base" | "solana";
 
 export interface AgentSurfaceContext {
-  solana?: SolanaDevnetAdapter;
-  base?: BaseSepoliaAdapter;
-  cctpMint?: {
-    binaryPath: string;
-    solanaRpcUrl: string;
-    relayerPrivateKey: string;
+  client: SettlementClient;
+  defaultWallets?: {
+    base?: string;
+    solana?: string;
   };
-  cctpBurnSolana?: {
-    binaryPath: string;
-    solanaRpcUrl: string;
-    relayerPrivateKey: string;
-  };
+  pollIntervalMs?: number;
+  pollTimeoutMs?: number;
 }
 
-function inferChain(addr: string): "solana" | "evm" | "unknown" {
-  if (EVM_ADDRESS_RE.test(addr)) return "evm";
+interface PortfolioChainEntry {
+  chain: string;
+  asset: string;
+  balance: string;
+  address?: string;
+}
+
+interface PortfolioResponse {
+  chains: PortfolioChainEntry[];
+}
+
+function isPortfolioResponse(v: unknown): v is PortfolioResponse {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    Array.isArray((v as { chains?: unknown }).chains)
+  );
+}
+
+function inferChain(addr: string): Chain | "unknown" {
+  if (EVM_ADDRESS_RE.test(addr)) return "base";
   if (SOLANA_ADDRESS_RE.test(addr)) return "solana";
   return "unknown";
+}
+
+const BalanceInputSchema = z.object({
+  walletAddress: z.string().min(1).optional(),
+});
+
+const BalanceByChainEntrySchema = z.object({
+  balance: z.string(),
+  address: z.string(),
+});
+
+const BalanceOutputSchema = z.object({
+  asset: z.literal("USDC"),
+  totalUsdc: z.string(),
+  byChain: z.record(z.string(), BalanceByChainEntrySchema),
+});
+
+type BalanceOutput = z.infer<typeof BalanceOutputSchema>;
+
+async function readPortfolio(
+  client: SettlementClient,
+  address: string
+): Promise<PortfolioChainEntry[]> {
+  const raw = await client.portfolio(address);
+  if (!isPortfolioResponse(raw)) return [];
+  return raw.chains.filter(
+    (c): c is PortfolioChainEntry =>
+      typeof c === "object" &&
+      c !== null &&
+      typeof (c as PortfolioChainEntry).chain === "string" &&
+      typeof (c as PortfolioChainEntry).balance === "string"
+  );
 }
 
 export const balanceTool = {
   name: "sw4p.balance" as const,
   description:
-    "Show the user's USDC balance. Returns balances across every chain the kit is configured for. Use this when the user asks about their funds, wallet, or available USDC.",
+    "Show the user's USDC balance across every supported chain. Use this when the user asks about funds, wallet, or available USDC. Pass walletAddress to query a specific wallet; otherwise the kit aggregates across configured default wallets.",
   inputSchema: BalanceInputSchema,
-  async handler(_input: z.infer<typeof BalanceInputSchema>, ctx: AgentSurfaceContext) {
-    const result: Record<string, { balance: string; address: string }> = {};
-    let totalUsdc = 0;
+  async handler(
+    input: z.infer<typeof BalanceInputSchema>,
+    ctx: AgentSurfaceContext
+  ): Promise<BalanceOutput> {
+    const explicit = input.walletAddress;
+    const defaults = ctx.defaultWallets ?? {};
+    const targets: Array<{ address: string; fallbackChain?: Chain }> = [];
 
-    if (ctx.solana) {
-      const b = await ctx.solana.usdcBalance();
-      result.solana = { balance: b, address: ctx.solana.walletAddress };
-      totalUsdc += Number.parseFloat(b);
+    if (explicit) {
+      targets.push({ address: explicit });
+    } else {
+      if (defaults.base) targets.push({ address: defaults.base, fallbackChain: "base" });
+      if (defaults.solana) targets.push({ address: defaults.solana, fallbackChain: "solana" });
     }
-    if (ctx.base) {
-      const b = await ctx.base.usdcBalance();
-      result.base = { balance: b, address: ctx.base.walletAddress };
-      totalUsdc += Number.parseFloat(b);
+
+    if (targets.length === 0) {
+      throw new Error(
+        "sw4p.balance requires a walletAddress argument or one of SW4P_USER_WALLET_BASE / SW4P_USER_WALLET_SOLANA env vars."
+      );
     }
-    return {
+
+    const byChain: Record<string, { balance: string; address: string }> = {};
+    let totalMicroUsdc = 0n;
+
+    for (const target of targets) {
+      const entries = await readPortfolio(ctx.client, target.address);
+      for (const entry of entries) {
+        if (entry.asset !== "USDC") continue;
+        const micro = toMicroUsdc(entry.balance);
+        totalMicroUsdc += micro;
+        byChain[entry.chain] = {
+          balance: entry.balance,
+          address: entry.address ?? target.address,
+        };
+      }
+    }
+
+    const output: BalanceOutput = {
       asset: "USDC",
-      totalUsdc: totalUsdc.toFixed(6),
-      byChain: result,
+      totalUsdc: fromMicroUsdc(totalMicroUsdc),
+      byChain,
     };
+
+    return BalanceOutputSchema.parse(output);
   },
 };
 
-interface SendResult {
-  status: "settled";
-  amount: string;
-  recipient: string;
-  asset: "USDC";
-  route: string;
-  steps: Array<{ chain: string; action: string; signature: string; explorerUrl: string; elapsedMs?: number }>;
-  totalElapsedMs: number;
+function toMicroUsdc(decimal: string): bigint {
+  const [whole, frac = ""] = decimal.split(".");
+  const fracPadded = (frac + "000000").slice(0, 6);
+  return BigInt(whole ?? "0") * 1_000_000n + BigInt(fracPadded || "0");
 }
 
-async function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+function fromMicroUsdc(micro: bigint): string {
+  const whole = micro / 1_000_000n;
+  const frac = (micro % 1_000_000n).toString().padStart(6, "0");
+  return `${whole}.${frac}`;
 }
 
-async function pollAttestation(burnTxHash: string): Promise<{ message: string; attestation: string }> {
-  const url = `https://iris-api-sandbox.circle.com/v2/messages/6?transactionHash=${burnTxHash}`;
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    const r = await fetch(url);
-    if (r.ok) {
-      const body = (await r.json()) as { messages?: Array<{ status: string; message: string; attestation: string }> };
-      const m = body.messages?.[0];
-      if (m?.status === "complete") return { message: m.message, attestation: m.attestation };
-    }
-    await sleep(2000);
+const SendInputSchema = z.object({
+  amount: z.string().regex(/^\d+(\.\d+)?$/, "amount must be a positive decimal"),
+  recipient: z.string().min(32),
+  sourceChain: z.enum(["base", "solana"]).optional(),
+  fromAddress: z.string().min(1).optional(),
+  note: z.string().max(200).optional(),
+});
+
+const SendStepSchema = z.object({
+  chain: z.enum(["base", "solana"]),
+  action: z.enum(["submit", "settle"]),
+  state: z.string(),
+  intentId: z.string(),
+  elapsedMs: z.number().int().nonnegative(),
+});
+
+const SendOutputSchema = z.object({
+  status: z.literal("settled"),
+  amount: z.string(),
+  recipient: z.string(),
+  asset: z.literal("USDC"),
+  route: z.string(),
+  steps: z.array(SendStepSchema).min(2),
+  totalElapsedMs: z.number().int().nonnegative(),
+  intentId: z.string(),
+});
+
+type SendOutput = z.infer<typeof SendOutputSchema>;
+
+const TERMINAL_OK = new Set(["completed", "settled"]);
+const TERMINAL_FAIL = new Set(["failed"]);
+
+const DEFAULT_POLL_INTERVAL_MS = 1000;
+const DEFAULT_POLL_TIMEOUT_MS = 60_000;
+const DEFAULT_TTL_SECONDS = 600;
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+function resolveSourceChain(
+  input: { sourceChain?: Chain | undefined; fromAddress?: string | undefined },
+  destChain: Chain,
+  defaults: { base?: string; solana?: string }
+): Chain {
+  if (input.sourceChain) return input.sourceChain;
+  if (input.fromAddress) {
+    const inferred = inferChain(input.fromAddress);
+    if (inferred !== "unknown") return inferred;
   }
-  throw new Error("Iris attestation never completed within 60s");
+  if (defaults[destChain]) return destChain;
+  if (defaults.base) return "base";
+  if (defaults.solana) return "solana";
+  return destChain;
 }
 
-async function executeMintBinary(
-  cctpMint: NonNullable<AgentSurfaceContext["cctpMint"]>,
-  message: string,
-  attestation: string,
-  recipient: string
-): Promise<{ signature: string }> {
-  const { spawn } = await import("node:child_process");
-  return new Promise((resolve, reject) => {
-    const child = spawn(cctpMint.binaryPath, [message, attestation, recipient], {
-      env: {
-        ...process.env,
-        SOLANA_RPC_URL: cctpMint.solanaRpcUrl,
-        SOLANA_RELAYER_PRIVATE_KEY: cctpMint.relayerPrivateKey,
-        RUST_LOG: "info",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c) => (stdout += c.toString()));
-    child.stderr.on("data", (c) => (stderr += c.toString()));
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`mint binary exited ${code}: ${stderr || stdout}`));
-        return;
-      }
-      const m = (stdout + stderr).match(/Transaction Signature: (\S+)/);
-      if (!m) {
-        reject(new Error(`signature not found in binary output`));
-        return;
-      }
-      resolve({ signature: m[1]! });
-    });
-  });
+function resolveSourceAddress(
+  input: { fromAddress?: string | undefined },
+  sourceChain: Chain,
+  defaults: { base?: string; solana?: string }
+): string {
+  if (input.fromAddress) return input.fromAddress;
+  const fallback = defaults[sourceChain];
+  if (fallback) return fallback;
+  throw new Error(
+    `sw4p.send requires a fromAddress argument or the SW4P_USER_WALLET_${sourceChain.toUpperCase()} env var.`
+  );
 }
 
 export const sendTool = {
   name: "sw4p.send" as const,
   description:
-    "Send USDC to any address — Solana or EVM. The kit figures out the source chain, route, and any required cross-chain steps. Use this for any 'send X USDC to Y' intent. Returns settled state with explorer URLs for every on-chain action.",
+    "Send USDC to any supported address (EVM or Solana). The protocol picks the route, signs, settles, and reports when funds arrive on the destination chain. Use for any 'send X USDC to Y' intent.",
   inputSchema: SendInputSchema,
-  async handler(input: z.infer<typeof SendInputSchema>, ctx: AgentSurfaceContext): Promise<SendResult> {
+  async handler(
+    input: z.infer<typeof SendInputSchema>,
+    ctx: AgentSurfaceContext
+  ): Promise<SendOutput> {
     const start = Date.now();
     const destChain = inferChain(input.recipient);
-    if (destChain === "unknown") throw new Error(`unrecognized address: ${input.recipient}`);
-
-    const solBalance = ctx.solana ? Number.parseFloat(await ctx.solana.usdcBalance()) : 0;
-    const baseBalance = ctx.base ? Number.parseFloat(await ctx.base.usdcBalance()) : 0;
-    const amountNum = Number.parseFloat(input.amount);
-    const fromHint = input.from ?? "auto";
-
-    // Explicit cross-chain request — honor it even when same-chain would work.
-    if (fromHint === "base" && destChain === "solana" && ctx.base && ctx.cctpMint && baseBalance >= amountNum) {
-      return executeCrossChainBaseToSolana(ctx, input, start);
-    }
-    if (fromHint === "solana" && destChain === "evm" && ctx.solana && ctx.base && ctx.cctpBurnSolana && solBalance >= amountNum) {
-      return executeCrossChainSolanaToBase(ctx, input, start);
+    if (destChain === "unknown") {
+      throw new Error(`unrecognized recipient address: ${input.recipient}`);
     }
 
-    // Same-chain transfers — fast path.
-    if (fromHint !== "base" && fromHint !== "solana" && destChain === "solana" && solBalance >= amountNum && ctx.solana) {
-      const tx = await ctx.solana.transferUsdc({ recipient: input.recipient, amount: input.amount });
-      return {
-        status: "settled",
-        amount: input.amount,
-        recipient: input.recipient,
-        asset: "USDC",
-        route: "solana-direct",
-        steps: [{ chain: "solana", action: "transfer", signature: tx.signature, explorerUrl: tx.explorerUrl }],
-        totalElapsedMs: Date.now() - start,
-      };
-    }
-    if (fromHint !== "solana" && destChain === "evm" && baseBalance >= amountNum && ctx.base) {
-      const tx = await ctx.base.transferUsdc({ recipient: input.recipient, amount: input.amount });
-      return {
-        status: "settled",
-        amount: input.amount,
-        recipient: input.recipient,
-        asset: "USDC",
-        route: "base-direct",
-        steps: [{ chain: "base", action: "transfer", signature: tx.txHash, explorerUrl: tx.explorerUrl }],
-        totalElapsedMs: Date.now() - start,
-      };
+    const defaults = ctx.defaultWallets ?? {};
+    const sourceChain = resolveSourceChain(input, destChain, defaults);
+    const sourceAddress = resolveSourceAddress(input, sourceChain, defaults);
+
+    const intent = {
+      from: { chain: sourceChain, asset: "USDC" as const, address: sourceAddress },
+      to: { chain: destChain, asset: "USDC" as const, address: input.recipient },
+      amount: input.amount,
+      ttlSeconds: DEFAULT_TTL_SECONDS,
+      ...(input.note ? { recipientMemo: input.note } : {}),
+    };
+
+    const submitStart = Date.now();
+    const estimate = await ctx.client.estimate(intent);
+    const settle = await ctx.client.settle(intent);
+    const submitElapsed = Date.now() - submitStart;
+
+    const settleStart = Date.now();
+    const intervalMs = ctx.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    const timeoutMs = ctx.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS;
+    const deadline = settleStart + timeoutMs;
+    let lastState = settle.status;
+
+    while (Date.now() <= deadline) {
+      const tick = await ctx.client.status(settle.intentId);
+      const stateField = (tick as { state?: string }).state ?? lastState;
+      lastState = stateField;
+      const normalized = stateField.toLowerCase();
+      if (TERMINAL_OK.has(normalized)) break;
+      if (TERMINAL_FAIL.has(normalized)) {
+        throw new Error(`sw4p.send failed: intent ${settle.intentId} entered terminal state "${stateField}"`);
+      }
+      await sleep(intervalMs);
     }
 
-    // Cross-chain fallback: destination is Solana but Solana has insufficient funds.
-    if (destChain === "solana" && ctx.base && ctx.cctpMint && baseBalance >= amountNum) {
-      return executeCrossChainBaseToSolana(ctx, input, start);
+    const normalizedFinal = lastState.toLowerCase();
+    if (!TERMINAL_OK.has(normalizedFinal)) {
+      throw new Error(
+        `sw4p.send timed out after ${timeoutMs}ms (last state: "${lastState}"); the intent may still settle — check sw4p.status with intentId=${settle.intentId}.`
+      );
     }
+    const settleElapsed = Date.now() - settleStart;
 
-    if (destChain === "evm" && ctx.solana && solBalance >= amountNum) {
-      throw new Error("Solana → EVM CCTP V2 round trip not yet wired in this build. Top up the Base wallet or use sw4p.send to a Solana address.");
-    }
+    const output: SendOutput = {
+      status: "settled",
+      amount: input.amount,
+      recipient: input.recipient,
+      asset: "USDC",
+      route: estimate.route,
+      intentId: settle.intentId,
+      steps: [
+        {
+          chain: sourceChain,
+          action: "submit",
+          state: settle.status,
+          intentId: settle.intentId,
+          elapsedMs: submitElapsed,
+        },
+        {
+          chain: destChain,
+          action: "settle",
+          state: lastState,
+          intentId: settle.intentId,
+          elapsedMs: settleElapsed,
+        },
+      ],
+      totalElapsedMs: Date.now() - start,
+    };
 
-    throw new Error(`insufficient funds: have solana=${solBalance} base=${baseBalance} usdc, need ${input.amount}`);
+    return SendOutputSchema.parse(output);
   },
 };
-
-async function executeCrossChainBaseToSolana(
-  ctx: AgentSurfaceContext,
-  input: { amount: string; recipient: string },
-  start: number
-): Promise<SendResult> {
-  if (!ctx.base || !ctx.cctpMint) throw new Error("base + cctpMint required");
-  const amountNum = Number.parseFloat(input.amount);
-  const burnStart = Date.now();
-  const burn = await ctx.base.cctpBurnToSolana({
-    amount: input.amount,
-    solanaRecipient: input.recipient,
-    maxFee: (amountNum / 1000).toFixed(6),
-  });
-  const burnElapsed = Date.now() - burnStart;
-
-  const attestStart = Date.now();
-  const { message, attestation } = await pollAttestation(burn.burnTxHash);
-  const attestElapsed = Date.now() - attestStart;
-
-  const mintStart = Date.now();
-  const mint = await executeMintBinary(ctx.cctpMint, message, attestation, burn.mintRecipientAta);
-  const mintElapsed = Date.now() - mintStart;
-
-  return {
-    status: "settled",
-    amount: input.amount,
-    recipient: input.recipient,
-    asset: "USDC",
-    route: "sw4p cross-chain settlement",
-    steps: [
-      { chain: "base", action: "submit", signature: burn.burnTxHash, explorerUrl: burn.basescanUrl, elapsedMs: burnElapsed + attestElapsed },
-      { chain: "solana", action: "settle", signature: mint.signature, explorerUrl: `https://orbmarkets.io/tx/${mint.signature}?cluster=devnet`, elapsedMs: mintElapsed },
-    ],
-    totalElapsedMs: Date.now() - start,
-  };
-}
-
-async function pollIrisSolana(burnSignature: string): Promise<{ message: string; attestation: string }> {
-  const url = `https://iris-api-sandbox.circle.com/v2/messages/5?transactionHash=${burnSignature}`;
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    const r = await fetch(url);
-    if (r.ok) {
-      const body = (await r.json()) as { messages?: Array<{ status: string; message: string; attestation: string }> };
-      const m = body.messages?.[0];
-      if (m?.status === "complete") return { message: m.message, attestation: m.attestation };
-    }
-    await sleep(2000);
-  }
-  throw new Error("Iris attestation (Solana → EVM) never completed");
-}
-
-async function executeBurnBinarySolana(
-  bin: NonNullable<AgentSurfaceContext["cctpBurnSolana"]>,
-  amountMicroUsdc: bigint,
-  destDomain: number,
-  evmRecipient: string
-): Promise<{ signature: string }> {
-  const { spawn } = await import("node:child_process");
-  return new Promise((resolve, reject) => {
-    const child = spawn(bin.binaryPath, [amountMicroUsdc.toString(), String(destDomain), evmRecipient], {
-      env: {
-        ...process.env,
-        SOLANA_RPC_URL: bin.solanaRpcUrl,
-        SOLANA_RELAYER_PRIVATE_KEY: bin.relayerPrivateKey,
-        RUST_LOG: "info",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c) => (stdout += c.toString()));
-    child.stderr.on("data", (c) => (stderr += c.toString()));
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`burn binary exited ${code}: ${stderr || stdout}`));
-        return;
-      }
-      const m = (stdout + stderr).match(/Transaction Signature: (\S+)/);
-      if (!m) {
-        reject(new Error(`signature not found: ${stdout} ${stderr}`));
-        return;
-      }
-      resolve({ signature: m[1]! });
-    });
-  });
-}
-
-async function executeCrossChainSolanaToBase(
-  ctx: AgentSurfaceContext,
-  input: { amount: string; recipient: string },
-  start: number
-): Promise<SendResult> {
-  if (!ctx.base || !ctx.cctpBurnSolana) throw new Error("base + cctpBurnSolana required");
-  const amountMicro = BigInt(Math.round(Number.parseFloat(input.amount) * 1_000_000));
-  const DOMAIN_BASE = 6;
-
-  const burnStart = Date.now();
-  const burn = await executeBurnBinarySolana(ctx.cctpBurnSolana, amountMicro, DOMAIN_BASE, input.recipient);
-  const burnElapsed = Date.now() - burnStart;
-
-  const attestStart = Date.now();
-  const { message, attestation } = await pollIrisSolana(burn.signature);
-  const attestElapsed = Date.now() - attestStart;
-
-  const receiveStart = Date.now();
-  const receive = await ctx.base.cctpReceiveFromSolana({ message, attestation });
-  const receiveElapsed = Date.now() - receiveStart;
-
-  return {
-    status: "settled",
-    amount: input.amount,
-    recipient: input.recipient,
-    asset: "USDC",
-    route: "sw4p cross-chain settlement",
-    steps: [
-      { chain: "solana", action: "submit", signature: burn.signature, explorerUrl: `https://orbmarkets.io/tx/${burn.signature}?cluster=devnet`, elapsedMs: burnElapsed + attestElapsed },
-      { chain: "base", action: "settle", signature: receive.receiveTxHash, explorerUrl: receive.basescanUrl, elapsedMs: receiveElapsed },
-    ],
-    totalElapsedMs: Date.now() - start,
-  };
-}
