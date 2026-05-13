@@ -49,14 +49,39 @@ export interface FullToolContext {
 }
 
 /**
- * Single canonical message returned by every async-task-rejecting tool over
- * the stateless HTTP transport. Tests assert against `/stateless/i` so we
- * keep "stateless" in the wording.
+ * Build the canonical "this async-task workflow isn't available over the
+ * stateless HTTP transport" error message for a specific tool. Parameterized
+ * by tool name so the message accurately names what the caller invoked and
+ * recommends the correct synchronous substitute.
+ *
+ * Tests assert against `/stateless/i` so we keep "stateless" in the wording.
  */
-export const STATELESS_ASYNC_TASKS_ERROR =
-  "sw4p.task is not available over the stateless HTTP transport. " +
-  "Use the stdio transport (sw4p-mcp) for async task workflows, or " +
-  "call sw4p.status synchronously instead of sw4p.settle({async:true}).";
+export function statelessAsyncTasksError(
+  tool: "sw4p.task" | "sw4p.settle" | "sw4p.rebalance_execute",
+): string {
+  // For sw4p.task there is no synchronous substitute — the user wanted to
+  // poll an existing task handle and that requires the stdio transport.
+  // For sw4p.settle / sw4p.rebalance_execute the correct sync path is the
+  // SAME tool called WITHOUT `async: true` (which returns the settled
+  // intent directly instead of a task handle).
+  const syncSubstitute =
+    tool === "sw4p.task"
+      ? "use the stdio transport (sw4p-mcp) to poll task handles, or use sw4p.status if you already have an intentId"
+      : `call ${tool} without the \`async: true\` flag (returns the settled intent directly)`;
+  return (
+    `${tool} requires cross-request task state and is not available over ` +
+    `the stateless HTTP transport. ${syncSubstitute}.`
+  );
+}
+
+/**
+ * @deprecated Kept for back-compat with any external consumer that imported
+ * this constant. New code should use `statelessAsyncTasksError(tool)` so
+ * the error names the actual tool the caller invoked. Tests against
+ * `/stateless/i` keep working — every variant of the function output
+ * contains the word "stateless".
+ */
+export const STATELESS_ASYNC_TASKS_ERROR = statelessAsyncTasksError("sw4p.task");
 
 interface ToolDescriptor {
   name: string;

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { SettlementClient, SettleResult } from "../../core/client.js";
 import type { TaskStore } from "../../core/task.js";
-import { STATELESS_ASYNC_TASKS_ERROR } from "../server.js";
+import { statelessAsyncTasksError } from "../server.js";
 
 const InputSchema = z.object({
   from: z.object({ chain: z.string(), asset: z.string(), address: z.string() }),
@@ -31,7 +31,7 @@ export const settleTool = {
   async handler(input: z.infer<typeof InputSchema>, ctx: ToolContext): Promise<SettleResult | { taskId: string; status: "pending" }> {
     if (input.async) {
       if (ctx.disableAsyncTasks) {
-        throw new Error(STATELESS_ASYNC_TASKS_ERROR);
+        throw new Error(statelessAsyncTasksError("sw4p.settle"));
       }
       if (ctx.tasks) {
         const handle = ctx.tasks.create("sw4p.settle");

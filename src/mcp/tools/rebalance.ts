@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { SettlementClient } from "../../core/client.js";
 import type { TaskStore } from "../../core/task.js";
-import { STATELESS_ASYNC_TASKS_ERROR } from "../server.js";
+import { statelessAsyncTasksError } from "../server.js";
 
 const PlanInputSchema = z.object({
   walletAddress: z.string().min(1),
@@ -39,7 +39,7 @@ export const rebalanceExecuteTool = {
   async handler(input: z.infer<typeof ExecuteInputSchema>, ctx: ToolContext) {
     if (input.async) {
       if (ctx.disableAsyncTasks) {
-        throw new Error(STATELESS_ASYNC_TASKS_ERROR);
+        throw new Error(statelessAsyncTasksError("sw4p.rebalance_execute"));
       }
       if (ctx.tasks) {
         const handle = ctx.tasks.create("sw4p.rebalance_execute");

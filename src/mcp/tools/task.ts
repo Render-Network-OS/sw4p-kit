@@ -1,17 +1,18 @@
 import { z } from "zod";
 import type { TaskStore } from "../../core/task.js";
-import { STATELESS_ASYNC_TASKS_ERROR } from "../server.js";
+import { statelessAsyncTasksError } from "../server.js";
 
 const InputSchema = z.object({ taskId: z.string().min(1) });
 
 export interface ToolContext {
   tasks: TaskStore;
   /**
-   * When set, the tool refuses with `STATELESS_ASYNC_TASKS_ERROR`. The
-   * Streamable HTTP transport sets this because each request constructs a
-   * fresh TaskStore — a taskId returned on one request cannot be polled on
-   * the next, and silently returning unusable taskIds would be a worse UX
-   * than refusing up front.
+   * When set, the tool refuses with an actionable error naming
+   * `sw4p.task` and pointing at the stdio transport. The Streamable
+   * HTTP transport sets this because each request constructs a fresh
+   * TaskStore — a taskId returned on one request cannot be polled on
+   * the next, and silently returning unusable taskIds would be a worse
+   * UX than refusing up front.
    */
   disableAsyncTasks?: boolean;
 }
@@ -22,7 +23,7 @@ export const taskTool = {
   inputSchema: InputSchema,
   async handler(input: z.infer<typeof InputSchema>, ctx: ToolContext) {
     if (ctx.disableAsyncTasks) {
-      throw new Error(STATELESS_ASYNC_TASKS_ERROR);
+      throw new Error(statelessAsyncTasksError("sw4p.task"));
     }
     const task = ctx.tasks.get(input.taskId);
     if (!task) throw new Error(`unknown task: ${input.taskId}`);
