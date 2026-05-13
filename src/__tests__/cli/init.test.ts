@@ -8,6 +8,7 @@ interface MemFs extends InitFs {
   reads: string[];
   writes: string[];
   copies: Array<[string, string]>;
+  renames: Array<[string, string]>;
 }
 
 function memFs(initial: Record<string, string> = {}): MemFs {
@@ -15,11 +16,13 @@ function memFs(initial: Record<string, string> = {}): MemFs {
   const reads: string[] = [];
   const writes: string[] = [];
   const copies: Array<[string, string]> = [];
+  const renames: Array<[string, string]> = [];
   return {
     files,
     reads,
     writes,
     copies,
+    renames,
     exists: (p) => files.has(p),
     readFile: async (p) => {
       reads.push(p);
@@ -38,6 +41,13 @@ function memFs(initial: Record<string, string> = {}): MemFs {
       files.set(to, v);
     },
     mkdir: async () => undefined,
+    rename: async (from, to) => {
+      renames.push([from, to]);
+      const v = files.get(from);
+      if (v === undefined) throw new Error(`ENOENT: ${from}`);
+      files.delete(from);
+      files.set(to, v);
+    },
   };
 }
 
@@ -478,5 +488,72 @@ describe("runInit", () => {
     // No filesystem touched, no prompts answered.
     expect(fs.writes).toEqual([]);
     expect(fs.copies).toEqual([]);
+  });
+
+  it("write-back is atomic: writes to temp file, then renames to final path", async () => {
+    const claudePath = path.join(home, ".claude.json");
+    const fs = memFs({
+      [claudePath]: JSON.stringify(
+        { mcpServers: { keep: { command: "foo", args: [], env: {} } } },
+        null,
+        2
+      ),
+    });
+    const io = scriptedIO({
+      answers: ["", "", ""],
+      secrets: ["k_test"],
+      confirms: [true],
+    });
+
+    await runInit({
+      io,
+      fs,
+      home,
+      cwd,
+      env: {},
+      now: () => FROZEN_TIME,
+    });
+
+    // Exactly one writeFile, and it must target a temp path, not the final
+    // config path. The temp suffix is documented as
+    // `.sw4p-kit-init-tmp-<pid>-<ts>`.
+    expect(fs.writes).toHaveLength(1);
+    expect(fs.writes[0]!).toMatch(/\.sw4p-kit-init-tmp-/);
+    expect(fs.writes[0]!).not.toBe(claudePath);
+
+    // Exactly one rename, from that temp path to the final config path.
+    expect(fs.renames).toHaveLength(1);
+    expect(fs.renames[0]![0]).toMatch(/\.sw4p-kit-init-tmp-/);
+    expect(fs.renames[0]![1]).toBe(claudePath);
+
+    // After the rename, the final file is in place AND no temp leftover.
+    expect(fs.files.has(claudePath)).toBe(true);
+    expect(
+      Array.from(fs.files.keys()).some((k) => k.includes(".sw4p-kit-init-tmp-"))
+    ).toBe(false);
+
+    // Content reflects the new sw4p entry — pre-existing "keep" preserved.
+    const final = JSON.parse(fs.files.get(claudePath)!) as Record<string, unknown>;
+    expect((final.mcpServers as Record<string, unknown>).sw4p).toBeDefined();
+    expect((final.mcpServers as Record<string, unknown>).keep).toBeDefined();
+  });
+
+  it("temp file path lives in the same directory as the target (same-fs rename)", async () => {
+    // POSIX rename(2) is only atomic within the same filesystem. The temp
+    // file therefore must be a sibling of the target — putting it elsewhere
+    // (e.g. /tmp) defeats the guarantee. This test pins the requirement.
+    const claudePath = path.join(home, ".claude.json");
+    const fs = memFs({ [claudePath]: "{}" });
+    const io = scriptedIO({
+      answers: ["", "", ""],
+      secrets: ["k_test"],
+      confirms: [true],
+    });
+
+    await runInit({ io, fs, home, cwd, env: {}, now: () => FROZEN_TIME });
+
+    expect(fs.renames).toHaveLength(1);
+    const [tmp, final] = fs.renames[0]!;
+    expect(path.dirname(tmp)).toBe(path.dirname(final));
   });
 });

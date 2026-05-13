@@ -72,6 +72,11 @@ Get an API key: https://console.sw4p.io
 
 /**
  * File-system shape consumed by runInit, so tests can stub it.
+ *
+ * `rename` is included so write-back can use the atomic temp+rename pattern
+ * — `writeFile` directly to the target is non-atomic on POSIX (a kill during
+ * the write can truncate the user's config). `rename(2)` IS atomic within
+ * the same filesystem, so we always write to a sibling temp file first.
  */
 export interface InitFs {
   exists: (p: string) => boolean;
@@ -79,6 +84,7 @@ export interface InitFs {
   writeFile: (p: string, data: string) => Promise<void>;
   copyFile: (from: string, to: string) => Promise<void>;
   mkdir: (p: string) => Promise<void>;
+  rename: (from: string, to: string) => Promise<void>;
 }
 
 export function nodeFs(): InitFs {
@@ -88,6 +94,7 @@ export function nodeFs(): InitFs {
     writeFile: (p, data) => fs.writeFile(p, data, "utf8"),
     copyFile: (from, to) => fs.copyFile(from, to),
     mkdir: (p) => fs.mkdir(p, { recursive: true }).then(() => undefined),
+    rename: (from, to) => fs.rename(from, to),
   };
 }
 
@@ -415,7 +422,17 @@ async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
 
   const indent = inferIndent(raw);
   const next = JSON.stringify(parsed, null, indent) + (raw.endsWith("\n") ? "\n" : "");
-  await fsx.writeFile(configPath, next);
+
+  // Atomic write: write to a sibling temp file in the same directory, then
+  // rename(2) onto the target. POSIX rename is atomic within the same
+  // filesystem, so a kill anywhere before the rename leaves the original
+  // file untouched, and a kill anywhere after the rename leaves the new
+  // file intact. The temp suffix includes pid + ms timestamp to avoid
+  // collisions if two init runs race; the prefix dot keeps it out of glob
+  // expansions when not requested.
+  const tmpPath = `${configPath}.sw4p-kit-init-tmp-${process.pid}-${Date.now()}`;
+  await fsx.writeFile(tmpPath, next);
+  await fsx.rename(tmpPath, configPath);
   if (backup) {
     io.print(`  ✓ ${platform.label}: wrote ${configPath} (backup: ${backup}).`);
   } else {
