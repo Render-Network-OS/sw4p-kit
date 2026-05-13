@@ -30,7 +30,9 @@ const sdkClient = buildSdkClient({
   network: SW4P_NETWORK,
 });
 
-const client = new SettlementClient({ sdk: sdkClient as never });
+// `SdkClient` and `SdkLike` are structurally identical (same six
+// methods, same signatures) — the assignment is type-safe with no cast.
+const client = new SettlementClient({ sdk: sdkClient });
 const signer = AP2_SIGNING_KEY ? new HmacSigner(AP2_SIGNING_KEY) : undefined;
 
 const defaultWallets: { base?: string; solana?: string } = {};
