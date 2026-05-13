@@ -264,4 +264,63 @@ describe("runDoctor", () => {
     const last = io.output[io.output.length - 1] ?? "";
     expect(last.startsWith("SW4P-KIT-DOCTOR:")).toBe(true);
   });
+
+  it("reports project-local registration as pass when <cwd>/.mcp.json has sw4p", async () => {
+    const io = recordingIO();
+    const claudePath = path.join(home, ".claude.json");
+    const projectPath = path.join(cwd, ".mcp.json");
+    const fs = memFs({
+      [claudePath]: JSON.stringify({
+        mcpServers: { sw4p: { command: "npx", args: ["-y", "@sw4p/kit", "sw4p-mcp"] } },
+      }),
+      [projectPath]: JSON.stringify({
+        mcpServers: { sw4p: { command: "npx", args: ["-y", "@sw4p/kit", "sw4p-mcp"] } },
+      }),
+    });
+    const { fetch } = fakeFetch(() => ({ ok: true, status: 200, body: "ok" }));
+
+    const result = await runDoctor({
+      io,
+      fs,
+      fetch,
+      home,
+      cwd,
+      env: { apiKey: "k", network: "testnet" },
+      kitVersion: "0.1.0",
+      sdkVersion: "unpublished",
+    });
+
+    const projectCheck = result.checks.find(
+      (c) => c.name === "agent: Claude Code (project-local .mcp.json)"
+    );
+    expect(projectCheck).toBeDefined();
+    expect(projectCheck!.status).toBe("pass");
+    expect(projectCheck!.detail).toContain(projectPath);
+  });
+
+  it("omits the project-local check entirely when <cwd>/.mcp.json is absent", async () => {
+    const io = recordingIO();
+    const claudePath = path.join(home, ".claude.json");
+    const fs = memFs({
+      [claudePath]: JSON.stringify({
+        mcpServers: { sw4p: { command: "npx", args: [] } },
+      }),
+    });
+    const { fetch } = fakeFetch(() => ({ ok: true, status: 200, body: "ok" }));
+
+    const result = await runDoctor({
+      io,
+      fs,
+      fetch,
+      home,
+      cwd,
+      env: { apiKey: "k", network: "testnet" },
+      kitVersion: "0.1.0",
+      sdkVersion: "unpublished",
+    });
+
+    expect(
+      result.checks.some((c) => c.name.includes("project-local .mcp.json"))
+    ).toBe(false);
+  });
 });

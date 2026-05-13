@@ -189,6 +189,16 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
     checks.push(r);
   }
 
+  // 6. Project-local Claude Code registration — reported conditionally.
+  // Claude Code also reads <cwd>/.mcp.json (the team-shareable, commit-able
+  // project-local registration file). We only surface this check when the
+  // file actually exists, so doctor stays quiet for directories that aren't
+  // a project context.
+  const projectMcpPath = path.join(cwd, ".mcp.json");
+  if (fsx.exists(projectMcpPath)) {
+    checks.push(await inspectProjectLocal(projectMcpPath, fsx));
+  }
+
   // Print everything
   for (const c of checks) io.print(`  ${badge(c.status)} ${c.name}: ${c.detail}`);
 
@@ -202,6 +212,36 @@ export async function runDoctor(opts: DoctorOptions): Promise<DoctorResult> {
   io.print(summary);
 
   return { checks, exitCode, summary };
+}
+
+async function inspectProjectLocal(
+  projectMcpPath: string,
+  fsx: DoctorFs
+): Promise<CheckResult> {
+  const name = "agent: Claude Code (project-local .mcp.json)";
+  try {
+    const raw = await fsx.readFile(projectMcpPath);
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const servers = parsed.mcpServers as Record<string, unknown> | undefined;
+    if (servers && typeof servers === "object" && "sw4p" in servers) {
+      return {
+        name,
+        status: "pass",
+        detail: `sw4p registered in ${projectMcpPath}`,
+      };
+    }
+    return {
+      name,
+      status: "warn",
+      detail: `${projectMcpPath} present but sw4p not registered (run sw4p-kit-init --project)`,
+    };
+  } catch (err) {
+    return {
+      name,
+      status: "warn",
+      detail: `${projectMcpPath} present but unreadable: ${stringifyErr(err)}`,
+    };
+  }
 }
 
 async function inspectPlatform(
