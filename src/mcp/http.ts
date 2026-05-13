@@ -99,7 +99,15 @@ function buildMcp(opts: {
   const sdkClient = (opts.sdkClientFactory ?? ((key) => buildSdkClient({ apiUrl: opts.apiUrl, apiKey: key, network: opts.network })))(opts.apiKey);
   const client = new SettlementClient({ sdk: sdkClient as never });
 
-  const serverOpts: ServerOptions = { client };
+  const serverOpts: ServerOptions = {
+    client,
+    // Stateless HTTP transport: every request builds a fresh kit (and a
+    // fresh TaskStore), so any tool that depends on cross-request task
+    // state would silently leak unusable taskIds. The kit refuses such
+    // calls up front with an actionable error. See `server.ts`'s
+    // `disableAsyncTasks` doc-block for the full list of affected tools.
+    disableAsyncTasks: true,
+  };
   if (opts.signer) serverOpts.signer = opts.signer;
   if (opts.defaultWallets.base || opts.defaultWallets.solana) {
     serverOpts.defaultWallets = opts.defaultWallets;
@@ -120,8 +128,19 @@ function buildMcp(opts: {
   }));
 
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const result = await kit.callTool(req.params.name, req.params.arguments ?? {});
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    try {
+      const result = await kit.callTool(req.params.name, req.params.arguments ?? {});
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      // Surface tool-handler errors as a CallToolResult with `isError: true`
+      // so MCP clients see a normal tool-error envelope (per the MCP spec)
+      // rather than a transport-level JSON-RPC error. Without this, the
+      // stateless-async refusal would arrive as a -32000 RPC error and
+      // most agents would render it as a transport failure rather than a
+      // tool result they can show to the user.
+      const message = err instanceof Error ? err.message : String(err);
+      return { isError: true, content: [{ type: "text", text: message }] };
+    }
   });
 
   return mcp;

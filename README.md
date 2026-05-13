@@ -79,6 +79,8 @@ curl -sS -X POST http://127.0.0.1:3939/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
+> **Async task workflows require stdio.** The Streamable HTTP transport is stateless — every request builds a fresh kit with its own `TaskStore`. Calls that depend on cross-request task state (`sw4p.settle({async: true})`, `sw4p.rebalance_execute({async: true})`, `sw4p.task`) are rejected with an actionable `isError` envelope pointing callers at the stdio transport (`sw4p-mcp`). The synchronous paths of `sw4p.settle` and `sw4p.rebalance_execute` work as normal.
+
 ### Frontier agent surface
 
 | Tool | What it does |

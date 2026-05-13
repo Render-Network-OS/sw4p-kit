@@ -222,4 +222,104 @@ describe("Streamable HTTP transport (Track B7)", () => {
     });
     expect(factory).toHaveBeenLastCalledWith("env-fallback-key");
   });
+
+  // ---- Track B7 I-1: stateless-async refusal ----
+  // The HTTP transport constructs a fresh kit (and a fresh TaskStore) per
+  // request, so any tool that depends on cross-request task state would
+  // silently leak unusable taskIds. Each of the three affected tools
+  // refuses up-front with an actionable error mentioning "stateless".
+
+  it("rejects sw4p.task call over HTTP transport with actionable error", async () => {
+    if (!handle) throw new Error("no handle");
+    const { status, json } = await postJson(
+      `http://127.0.0.1:${handle.port}/mcp`,
+      {
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: { name: "sw4p.task", arguments: { taskId: "task_anything" } },
+      },
+      { "X-API-Key": "test" }
+    );
+    expect(status).toBe(200);
+    const result = (json as { result: { isError: boolean; content: Array<{ type: string; text: string }> } }).result;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/stateless/i);
+    expect(result.content[0]?.text).toMatch(/sw4p-mcp/);
+  });
+
+  it("rejects sw4p.settle({async: true}) over HTTP transport", async () => {
+    if (!handle) throw new Error("no handle");
+    const { status, json } = await postJson(
+      `http://127.0.0.1:${handle.port}/mcp`,
+      {
+        jsonrpc: "2.0",
+        id: 11,
+        method: "tools/call",
+        params: {
+          name: "sw4p.settle",
+          arguments: {
+            from: { chain: "base", asset: "USDC", address: "0xabc" },
+            to: { chain: "solana", asset: "USDC", address: "5xN" },
+            amount: "10.00",
+            ttlSeconds: 600,
+            async: true,
+          },
+        },
+      },
+      { "X-API-Key": "test" }
+    );
+    expect(status).toBe(200);
+    const result = (json as { result: { isError: boolean; content: Array<{ type: string; text: string }> } }).result;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/stateless/i);
+  });
+
+  it("rejects sw4p.rebalance_execute({async: true}) over HTTP transport", async () => {
+    if (!handle) throw new Error("no handle");
+    const { status, json } = await postJson(
+      `http://127.0.0.1:${handle.port}/mcp`,
+      {
+        jsonrpc: "2.0",
+        id: 12,
+        method: "tools/call",
+        params: {
+          name: "sw4p.rebalance_execute",
+          arguments: { plan: { moves: [] }, async: true },
+        },
+      },
+      { "X-API-Key": "test" }
+    );
+    expect(status).toBe(200);
+    const result = (json as { result: { isError: boolean; content: Array<{ type: string; text: string }> } }).result;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/stateless/i);
+  });
+
+  it("sw4p.settle synchronous (no async flag) still works over HTTP", async () => {
+    if (!handle) throw new Error("no handle");
+    const { status, json } = await postJson(
+      `http://127.0.0.1:${handle.port}/mcp`,
+      {
+        jsonrpc: "2.0",
+        id: 13,
+        method: "tools/call",
+        params: {
+          name: "sw4p.settle",
+          arguments: {
+            from: { chain: "base", asset: "USDC", address: "0xabc" },
+            to: { chain: "solana", asset: "USDC", address: "5xN" },
+            amount: "10.00",
+            ttlSeconds: 600,
+          },
+        },
+      },
+      { "X-API-Key": "test" }
+    );
+    expect(status).toBe(200);
+    const result = (json as { result: { content: Array<{ type: string; text: string }>; isError?: boolean } }).result;
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]!.text) as { intentId: string };
+    expect(parsed.intentId).toBe("intent_123");
+  });
 });
