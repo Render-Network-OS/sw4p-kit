@@ -85,6 +85,13 @@ export interface InitFs {
   copyFile: (from: string, to: string) => Promise<void>;
   mkdir: (p: string) => Promise<void>;
   rename: (from: string, to: string) => Promise<void>;
+  /**
+   * Best-effort cleanup of a temp file when an atomic rename fails.
+   * The implementation should swallow ENOENT (file already gone) but
+   * propagate any other error. Used by `writeJsonPlatform` to avoid
+   * leaving a cleartext-API-key temp file on disk when rename fails.
+   */
+  unlink: (p: string) => Promise<void>;
 }
 
 export function nodeFs(): InitFs {
@@ -95,6 +102,14 @@ export function nodeFs(): InitFs {
     copyFile: (from, to) => fs.copyFile(from, to),
     mkdir: (p) => fs.mkdir(p, { recursive: true }).then(() => undefined),
     rename: (from, to) => fs.rename(from, to),
+    unlink: async (p) => {
+      try {
+        await fs.unlink(p);
+      } catch (err) {
+        // ENOENT = already gone, swallow. Surface anything else.
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+      }
+    },
   };
 }
 
@@ -430,9 +445,30 @@ async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
   // file intact. The temp suffix includes pid + ms timestamp to avoid
   // collisions if two init runs race; the prefix dot keeps it out of glob
   // expansions when not requested.
+  //
+  // SECURITY: the temp file contains the user's SW4P_API_KEY in cleartext
+  // (via `buildMcpEntry().env.SW4P_API_KEY`). If `rename` throws — for
+  // any reason: permission denied, read-only filesystem, EXDEV (cross-
+  // filesystem rename) — we MUST unlink the temp file BEFORE
+  // propagating the error, otherwise the key persists at
+  // `<configPath>.sw4p-kit-init-tmp-<pid>-<ts>` in `$HOME` (or `<cwd>`
+  // for project-local writes) where it can be world-readable depending
+  // on umask. Track C1/C2 Important fix.
   const tmpPath = `${configPath}.sw4p-kit-init-tmp-${process.pid}-${Date.now()}`;
   await fsx.writeFile(tmpPath, next);
-  await fsx.rename(tmpPath, configPath);
+  try {
+    await fsx.rename(tmpPath, configPath);
+  } catch (renameErr) {
+    // Best-effort cleanup; if unlink itself throws (e.g. tmp file
+    // already gone), preserve the original rename error as the
+    // primary failure surface.
+    try {
+      await fsx.unlink(tmpPath);
+    } catch {
+      // ignore — the rename error below is what the user should see
+    }
+    throw renameErr;
+  }
   if (backup) {
     io.print(`  ✓ ${platform.label}: wrote ${configPath} (backup: ${backup}).`);
   } else {

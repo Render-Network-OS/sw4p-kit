@@ -9,6 +9,12 @@ interface MemFs extends InitFs {
   writes: string[];
   copies: Array<[string, string]>;
   renames: Array<[string, string]>;
+  unlinks: string[];
+  /**
+   * Hook to force `rename` to throw on the next call — used by the
+   * temp-cleanup regression test. Cleared after firing.
+   */
+  failNextRenameWith?: Error;
 }
 
 function memFs(initial: Record<string, string> = {}): MemFs {
@@ -17,12 +23,14 @@ function memFs(initial: Record<string, string> = {}): MemFs {
   const writes: string[] = [];
   const copies: Array<[string, string]> = [];
   const renames: Array<[string, string]> = [];
-  return {
+  const unlinks: string[] = [];
+  const self: MemFs = {
     files,
     reads,
     writes,
     copies,
     renames,
+    unlinks,
     exists: (p) => files.has(p),
     readFile: async (p) => {
       reads.push(p);
@@ -42,13 +50,25 @@ function memFs(initial: Record<string, string> = {}): MemFs {
     },
     mkdir: async () => undefined,
     rename: async (from, to) => {
+      if (self.failNextRenameWith) {
+        const err = self.failNextRenameWith;
+        self.failNextRenameWith = undefined;
+        throw err;
+      }
       renames.push([from, to]);
       const v = files.get(from);
       if (v === undefined) throw new Error(`ENOENT: ${from}`);
       files.delete(from);
       files.set(to, v);
     },
+    unlink: async (p) => {
+      unlinks.push(p);
+      // Mirror nodeFs: swallow ENOENT, otherwise let the caller decide.
+      if (!files.has(p)) return;
+      files.delete(p);
+    },
   };
+  return self;
 }
 
 const home = "/home/test";
@@ -536,6 +556,45 @@ describe("runInit", () => {
     const final = JSON.parse(fs.files.get(claudePath)!) as Record<string, unknown>;
     expect((final.mcpServers as Record<string, unknown>).sw4p).toBeDefined();
     expect((final.mcpServers as Record<string, unknown>).keep).toBeDefined();
+  });
+
+  it("unlinks the temp file when rename fails so no cleartext API key is left on disk", async () => {
+    // Track C1/C2 Important: the atomic-write temp file contains the
+    // user's SW4P_API_KEY in cleartext. If rename(2) fails (permission
+    // denied, EXDEV, read-only filesystem, etc.), the temp file MUST be
+    // unlinked before the error is propagated — otherwise the key
+    // persists at `<configPath>.sw4p-kit-init-tmp-<pid>-<ts>` where it
+    // can be world-readable depending on umask.
+    const claudePath = path.join(home, ".claude.json");
+    const fs = memFs({ [claudePath]: "{}" });
+    fs.failNextRenameWith = Object.assign(new Error("EACCES: permission denied"), {
+      code: "EACCES",
+    });
+    const io = scriptedIO({
+      answers: ["", "", ""],
+      secrets: ["k_secret_api_key"],
+      confirms: [true],
+    });
+
+    await expect(
+      runInit({ io, fs, home, cwd, env: {}, now: () => FROZEN_TIME }),
+    ).rejects.toThrow(/EACCES/);
+
+    // The temp file MUST be unlinked.
+    expect(fs.unlinks).toHaveLength(1);
+    expect(fs.unlinks[0]!).toMatch(/\.sw4p-kit-init-tmp-/);
+
+    // No cleartext-key file is left in `fs.files`.
+    const leakedTemp = Array.from(fs.files.keys()).find((k) =>
+      k.includes(".sw4p-kit-init-tmp-"),
+    );
+    expect(leakedTemp).toBeUndefined();
+    // Belt-and-braces: the API key must not appear in any remaining file
+    // beyond what the user already had (here, the empty "{}" config).
+    for (const [filePath, contents] of fs.files.entries()) {
+      if (filePath === claudePath) continue; // unchanged original
+      expect(contents).not.toContain("k_secret_api_key");
+    }
   });
 
   it("temp file path lives in the same directory as the target (same-fs rename)", async () => {
