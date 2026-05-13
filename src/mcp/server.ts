@@ -74,15 +74,6 @@ export function statelessAsyncTasksError(
   );
 }
 
-/**
- * @deprecated Kept for back-compat with any external consumer that imported
- * this constant. New code should use `statelessAsyncTasksError(tool)` so
- * the error names the actual tool the caller invoked. Tests against
- * `/stateless/i` keep working — every variant of the function output
- * contains the word "stateless".
- */
-export const STATELESS_ASYNC_TASKS_ERROR = statelessAsyncTasksError("sw4p.task");
-
 interface ToolDescriptor {
   name: string;
   description: string;

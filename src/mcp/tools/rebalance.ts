@@ -17,7 +17,8 @@ export interface ToolContext {
   client: SettlementClient;
   tasks?: TaskStore;
   /**
-   * When set, `async: true` is rejected with `STATELESS_ASYNC_TASKS_ERROR`.
+   * When set, `async: true` is rejected with the per-tool message
+   * built by `statelessAsyncTasksError("sw4p.rebalance_execute")`.
    * See `settleTool` / `taskTool` for the same rationale.
    */
   disableAsyncTasks?: boolean;

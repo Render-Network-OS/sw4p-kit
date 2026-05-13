@@ -16,10 +16,11 @@ export interface ToolContext {
   client: SettlementClient;
   tasks?: TaskStore;
   /**
-   * When set, `async: true` is rejected with `STATELESS_ASYNC_TASKS_ERROR`
-   * because the caller is talking to a stateless transport where the
-   * returned taskId cannot be polled on a subsequent request. The sync
-   * path is unaffected.
+   * When set, `async: true` is rejected with the per-tool message
+   * built by `statelessAsyncTasksError("sw4p.settle")` because the
+   * caller is talking to a stateless transport where the returned
+   * taskId cannot be polled on a subsequent request. The sync path
+   * is unaffected.
    */
   disableAsyncTasks?: boolean;
 }

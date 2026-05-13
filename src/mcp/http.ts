@@ -27,7 +27,11 @@ import { createServer as createHttpServer, type IncomingMessage, type Server as 
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+  StreamableHTTPServerTransport,
+  type StreamableHTTPServerTransportOptions,
+} from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createServer as createKitServer, type ServerOptions } from "./server.js";
 import { SettlementClient } from "../core/client.js";
@@ -245,26 +249,34 @@ export async function startHttpServer(opts: HttpServerOptions = {}): Promise<Htt
       // `enableJsonResponse: true` so the response is a plain JSON envelope
       // rather than an SSE stream — that's what gateway/curl callers expect
       // for one-shot RPC.
-      // Cast to `never` (not `any`) is necessary because the SDK's options
-      // shape interacts badly with `exactOptionalPropertyTypes: true` —
-      // `never` coerces the literal through TypeScript's structural check
-      // without widening the resulting reference type.
-      const transport = new StreamableHTTPServerTransport({
+      //
+      // Annotate the options literal with the SDK's own
+      // `StreamableHTTPServerTransportOptions` type so the structural
+      // check happens against the SDK's intended shape rather than
+      // against the inferred literal type (which `exactOptionalPropertyTypes`
+      // narrows in a way the SDK's `?:` declarations don't account for).
+      const transportOptions: StreamableHTTPServerTransportOptions = {
         enableJsonResponse: true,
-      } as never);
+      };
+      const transport = new StreamableHTTPServerTransport(transportOptions);
 
       res.on("close", () => {
         transport.close().catch(() => undefined);
         mcp.close().catch(() => undefined);
       });
 
-      // Same `exactOptionalPropertyTypes` reason for the cast: the SDK's
-      // exported `Transport` interface has `onmessage?` (etc.) typed
-      // without `| undefined` while `StreamableHTTPServerTransport`'s
-      // getters return `... | undefined`. The class IS the SDK's
-      // intended transport — the runtime is correct; this is a
-      // TypeScript-strictness gap in the SDK's own types.
-      await mcp.connect(transport as never);
+      // SDK upstream gap: the exported `Transport` interface declares
+      // `onmessage?: (...) => void` (etc.) WITHOUT `| undefined` while
+      // `StreamableHTTPServerTransport`'s property accessors return
+      // `... | undefined` due to `exactOptionalPropertyTypes: true`.
+      // The class IS the intended Transport implementation at runtime —
+      // this is a TypeScript-strictness gap in the SDK's `.d.ts`.
+      // Cast through the named `Transport` interface so the structural
+      // boundary is explicit and a future SDK release that fixes its
+      // optional-property declarations will let us drop the cast in
+      // one obvious place.
+      const transportAsConnectArg = transport as unknown as Transport;
+      await mcp.connect(transportAsConnectArg);
       await transport.handleRequest(req, res, body);
     } catch (err) {
       // Surface the upstream `SdkHttpError` cleanly — its `.message`
