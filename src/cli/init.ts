@@ -39,7 +39,9 @@ function projectLocalPlatform(projectMcpPath: string): Platform {
 const HELP_TEXT = `sw4p-kit-init — interactive setup for the sw4p agent surface.
 
 Usage:
-  npx @sw4p/kit init [flags]   # interactive setup
+  npx @sw4p/kit init [flags]   # canonical invocation (via dispatch bin)
+  sw4p-kit init [flags]        # equivalent direct dispatch
+  sw4p-kit-init [flags]        # direct bin (skips dispatch)
   node ./dist/cli/init.js      # pre-publish form
   sw4p-kit-init --help         # print this message
   sw4p-kit-init --version      # print version

@@ -18,7 +18,9 @@ import {
 const HELP_TEXT = `sw4p-kit-doctor — diagnostics for the sw4p agent surface.
 
 Usage:
-  npx @sw4p/kit doctor         # full check
+  npx @sw4p/kit doctor         # canonical invocation (via dispatch bin)
+  sw4p-kit doctor              # equivalent direct dispatch
+  sw4p-kit-doctor              # direct bin (skips dispatch)
   node ./dist/cli/doctor.js    # pre-publish form
   sw4p-kit-doctor --help       # this message
   sw4p-kit-doctor --version    # version

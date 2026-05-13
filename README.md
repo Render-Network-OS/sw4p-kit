@@ -70,8 +70,11 @@ Two flags drive scripted use:
 
 Passing both errors out with exit code 2 (mutually exclusive).
 
-> **Pre-publish:** invoke via `node ./dist/cli/init.js` and
-> `node ./dist/cli/doctor.js` until v1.0 ships on npm.
+> **Pre-publish:** until v1.0 ships on npm, invoke via
+> `node ./dist/cli/dispatch.js init` / `node ./dist/cli/dispatch.js doctor`
+> (or directly `node ./dist/cli/init.js` / `node ./dist/cli/doctor.js`).
+> Post-publish, `npx @sw4p/kit init` and `npx @sw4p/kit doctor` are the
+> canonical entry points.
 
 Get an API key: [console.sw4p.io](https://console.sw4p.io).
 
