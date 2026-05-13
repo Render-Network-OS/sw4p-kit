@@ -24,8 +24,36 @@ export interface SdkClient {
   executeRebalance: (plan: unknown) => Promise<unknown>;
 }
 
+/**
+ * Track B7 Important: throw a real `Error` (with `.message` populated and
+ * the upstream `status` + `body` attached as own-properties) so consumers'
+ * `catch (err)` blocks that read `err.message` produce a useful diagnostic
+ * instead of `"[object Object]"` or `"Internal error: undefined"`.
+ */
+export class SdkHttpError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+  constructor(status: number, body: unknown) {
+    super(
+      `HTTP ${status} from sw4p API` +
+        (typeof body === "object" && body !== null
+          ? `: ${truncate(JSON.stringify(body), 512)}`
+          : ""),
+    );
+    this.name = "SdkHttpError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max)}…(truncated)`;
+}
+
 async function asJson<T>(r: Response): Promise<T> {
-  if (!r.ok) throw { status: r.status, body: await r.json().catch(() => ({})) };
+  if (!r.ok) {
+    throw new SdkHttpError(r.status, await r.json().catch(() => ({})));
+  }
   return r.json() as Promise<T>;
 }
 
