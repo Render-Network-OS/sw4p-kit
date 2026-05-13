@@ -37,7 +37,9 @@
     }
   },
   "bin": {
-    "sw4p-mcp": "dist/mcp/bin.js"
+    "sw4p-mcp": "dist/mcp/bin.js",
+    "sw4p-kit-init": "dist/cli/init.js",
+    "sw4p-kit-doctor": "dist/cli/doctor.js"
   },
   "files": [
     "dist",
