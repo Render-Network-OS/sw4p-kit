@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A518-43853d.svg)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-82%2F82-3C8D0D.svg)](#tests)
+[![Tests](https://img.shields.io/badge/tests-91%2F91-3C8D0D.svg)](#tests)
 [![Deps](https://img.shields.io/badge/prod%20deps-2-3C8D0D.svg)](package.json)
 
 ---
@@ -57,6 +57,27 @@ Add to any MCP-capable client (Claude Code, Cursor, Continue, Zed, ElizaOS):
 Once `@sw4p/kit` publishes to npm, the install collapses to `npm install @sw4p/kit` and the `args` line becomes `["sw4p-mcp"]` (via `npx`).
 
 The agent sees **9 tools** by default — the frontier agent surface (`sw4p.balance`, `sw4p.send`) plus the protocol surface (`sw4p.estimate`, `sw4p.settle`, `sw4p.status`, `sw4p.portfolio`, `sw4p.rebalance_plan`, `sw4p.rebalance_execute`, `sw4p.task` — the MCP 2025-11-25 async primitive). With an `AP2_SIGNING_KEY` set the count grows to 11 (adds `sw4p.ap2.cart_propose` and `sw4p.ap2.cart_execute`).
+
+### Streamable HTTP transport (hosted / remote agents)
+
+For hosted-gateway scenarios — where the kit runs behind an HTTPS endpoint instead of as a stdio child — boot the Streamable HTTP transport binary:
+
+```bash
+SW4P_API_KEY=... SW4P_MCP_HTTP_PORT=3939 node ./dist/mcp/http.js
+# → [sw4p-mcp-http] listening on http://0.0.0.0:3939
+```
+
+POST MCP JSON-RPC envelopes to `/mcp`; `GET /healthz` is a liveness probe. The same tool registry is served as stdio mode (9 tools by default, 11 with AP2). `SW4P_MCP_HTTP_PORT` defaults to `3939`.
+
+The HTTP transport accepts the API key two ways: from the `SW4P_API_KEY` env var at boot, or per-request via an `X-API-Key` header (header wins). This lets a gateway (e.g. `mcp.sw4p.io`) forward each caller's key on every request, so a single deployed kit serves many distinct callers without sharing credentials.
+
+```bash
+curl -sS -X POST http://127.0.0.1:3939/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'X-API-Key: sk_live_...' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
 
 ### Frontier agent surface
 
@@ -118,15 +139,15 @@ console.log(result.intentId); // intent_xxx — settled
 ## Tests
 
 ```bash
-npm test             # 82 unit + e2e tests
+npm test             # 91 unit + e2e tests
 npm run test:smoke   # gated staging / mainnet canary
 npm run build        # TypeScript build
 ```
 
 All tests green:
 ```
- Test Files  22 passed (22)
-      Tests  82 passed (82)
+ Test Files  23 passed (23)
+      Tests  91 passed (91)
 ```
 
 ## Architecture

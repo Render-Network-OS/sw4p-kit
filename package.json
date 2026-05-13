@@ -37,7 +37,8 @@
     }
   },
   "bin": {
-    "sw4p-mcp": "dist/mcp/bin.js"
+    "sw4p-mcp": "dist/mcp/bin.js",
+    "sw4p-mcp-http": "dist/mcp/http.js"
   },
   "files": [
     "dist",

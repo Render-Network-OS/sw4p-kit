@@ -5,6 +5,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { createServer } from "./server.js";
 import { SettlementClient } from "../core/client.js";
 import { HmacSigner } from "../ap2/mandate.js";
+import { buildSdkClient } from "./_sdk-client.js";
 
 const SW4P_API_URL = process.env.SW4P_API_URL ?? "https://api.sw4p.io";
 const SW4P_API_KEY = process.env.SW4P_API_KEY;
@@ -23,36 +24,11 @@ if (SW4P_NETWORK !== "mainnet" && SW4P_NETWORK !== "testnet") {
   process.exit(1);
 }
 
-async function asJson<T>(r: Response): Promise<T> {
-  if (!r.ok) throw { status: r.status, body: await r.json().catch(() => ({})) };
-  return r.json() as Promise<T>;
-}
-
-const writeHeaders = {
-  "Content-Type": "application/json",
-  "X-API-Key": SW4P_API_KEY,
-  "X-SW4P-Network": SW4P_NETWORK,
-};
-
-const readHeaders = {
-  "X-API-Key": SW4P_API_KEY,
-  "X-SW4P-Network": SW4P_NETWORK,
-};
-
-const sdkClient = {
-  estimate: (p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/estimate`, { method: "POST", headers: writeHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ feeBps: number; route: string; outputAmount: string }>,
-  transfer: (p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/transfer`, { method: "POST", headers: writeHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ intentId: string; status: string }>,
-  status: (id: string) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/status/${encodeURIComponent(id)}`, { headers: readHeaders }).then(asJson) as Promise<{ intentId: string; state: string }>,
-  getPortfolio: (addr: string) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/portfolio/${encodeURIComponent(addr)}`, { headers: readHeaders }).then(asJson),
-  planRebalance: (addr: string, p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/rebalance/plan`, { method: "POST", headers: writeHeaders, body: JSON.stringify({ walletAddress: addr, ...(p as object) }) }).then(asJson),
-  executeRebalance: (plan: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/rebalance/execute`, { method: "POST", headers: writeHeaders, body: JSON.stringify(plan) }).then(asJson),
-};
+const sdkClient = buildSdkClient({
+  apiUrl: SW4P_API_URL,
+  apiKey: SW4P_API_KEY,
+  network: SW4P_NETWORK,
+});
 
 const client = new SettlementClient({ sdk: sdkClient as never });
 const signer = AP2_SIGNING_KEY ? new HmacSigner(AP2_SIGNING_KEY) : undefined;
