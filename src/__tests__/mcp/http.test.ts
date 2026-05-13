@@ -341,38 +341,50 @@ describe("Streamable HTTP transport (Track B7)", () => {
   describe("entrypoint detection (npm bin shim)", () => {
     const distHttp = resolve(__dirname, "../../../dist/mcp/http.js");
 
-    it("boots when invoked directly via `node dist/mcp/http.js --version`", () => {
-      if (!existsSync(distHttp)) {
-        throw new Error(`dist/mcp/http.js not found at ${distHttp} — run \`npm run build\``);
-      }
-      const result = spawnSync(process.execPath, [distHttp, "--version"], {
-        encoding: "utf8",
-        timeout: 10_000,
-      });
-      expect(result.status).toBe(0);
-      expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
-    });
-
-    it("boots when invoked via a realpath-resolved symlink (simulates npm bin shim)", () => {
-      if (!existsSync(distHttp)) {
-        throw new Error(`dist/mcp/http.js not found at ${distHttp} — run \`npm run build\``);
-      }
-      const tmp = mkdtempSync(join(tmpdir(), "sw4p-bin-shim-"));
-      const shim = join(tmp, "sw4p-mcp-http");
-      try {
-        symlinkSync(distHttp, shim);
-        const result = spawnSync(process.execPath, [shim, "--version"], {
+    // Each spawn-based test gets a generous timeout: cold-starting `node`
+    // and importing the MCP SDK takes ~2.5s on this hardware in isolation,
+    // and 5-6s under concurrent vitest load. The 30s budget is well clear
+    // of either.
+    it(
+      "boots when invoked directly via `node dist/mcp/http.js --version`",
+      () => {
+        if (!existsSync(distHttp)) {
+          throw new Error(`dist/mcp/http.js not found at ${distHttp} — run \`npm run build\``);
+        }
+        const result = spawnSync(process.execPath, [distHttp, "--version"], {
           encoding: "utf8",
-          timeout: 10_000,
+          timeout: 20_000,
         });
-        // Without the realpath fix the script would silently no-op (exit 0
-        // but produce no output and not boot). With the fix, --version is
-        // hit and prints the version before exit.
         expect(result.status).toBe(0);
         expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
-      } finally {
-        rmSync(tmp, { recursive: true, force: true });
-      }
-    });
+      },
+      30_000
+    );
+
+    it(
+      "boots when invoked via a realpath-resolved symlink (simulates npm bin shim)",
+      () => {
+        if (!existsSync(distHttp)) {
+          throw new Error(`dist/mcp/http.js not found at ${distHttp} — run \`npm run build\``);
+        }
+        const tmp = mkdtempSync(join(tmpdir(), "sw4p-bin-shim-"));
+        const shim = join(tmp, "sw4p-mcp-http");
+        try {
+          symlinkSync(distHttp, shim);
+          const result = spawnSync(process.execPath, [shim, "--version"], {
+            encoding: "utf8",
+            timeout: 20_000,
+          });
+          // Without the realpath fix the script would silently no-op (exit 0
+          // but produce no output and not boot). With the fix, --version is
+          // hit and prints the version before exit.
+          expect(result.status).toBe(0);
+          expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+        } finally {
+          rmSync(tmp, { recursive: true, force: true });
+        }
+      },
+      30_000
+    );
   });
 });
