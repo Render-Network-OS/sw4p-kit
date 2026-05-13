@@ -597,6 +597,44 @@ describe("runInit", () => {
     }
   });
 
+  it("propagates non-ENOENT unlink errors (does not silently swallow EROFS)", async () => {
+    // Hack-fix: the previous implementation wrapped fsx.unlink in a
+    // bare `catch {}` so a non-ENOENT cleanup failure (EROFS,
+    // EACCES on the temp file, etc.) was silently swallowed,
+    // contradicting the InitFs.unlink seam contract which is
+    // supposed to propagate non-ENOENT errors. After the fix, both
+    // errors are surfaced — combined into one message naming the
+    // potentially-leaked cleartext-key file.
+    const claudePath = path.join(home, ".claude.json");
+    const fs = memFs({ [claudePath]: "{}" });
+    fs.failNextRenameWith = Object.assign(new Error("EACCES: permission denied"), {
+      code: "EACCES",
+    });
+    // Make memFs.unlink throw EROFS specifically — distinct from the
+    // rename error so the assertion is unambiguous about which one
+    // propagated.
+    const origUnlink = fs.unlink;
+    fs.unlink = async (p) => {
+      if (p.includes(".sw4p-kit-init-tmp-")) {
+        throw Object.assign(new Error("EROFS: read-only filesystem"), {
+          code: "EROFS",
+        });
+      }
+      return origUnlink(p);
+    };
+    const io = scriptedIO({
+      answers: ["", "", ""],
+      secrets: ["k_secret_api_key"],
+      confirms: [true],
+    });
+
+    // The combined error must mention BOTH the rename failure and the
+    // cleanup failure, with the cleartext-key file path called out.
+    await expect(
+      runInit({ io, fs, home, cwd, env: {}, now: () => FROZEN_TIME }),
+    ).rejects.toThrow(/EROFS.*read-only|cleartext SW4P_API_KEY/);
+  });
+
   it("temp file path lives in the same directory as the target (same-fs rename)", async () => {
     // POSIX rename(2) is only atomic within the same filesystem. The temp
     // file therefore must be a sibling of the target — putting it elsewhere

@@ -424,11 +424,13 @@ async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
     }
   } else {
     // Ensure parent directory exists for create-from-scratch case.
-    try {
-      await fsx.mkdir(path.dirname(configPath));
-    } catch {
-      /* mkdir is best-effort; node_fs uses recursive: true so existing dirs are fine */
-    }
+    // `nodeFs.mkdir` uses `recursive: true` which silently absorbs
+    // EEXIST at the seam — we should NOT swallow any other error
+    // (EACCES, EROFS, ENOTDIR all still throw). The previous bare
+    // `catch {}` masked legitimate filesystem errors that would have
+    // surfaced more confusingly downstream at writeFile/rename. Let
+    // mkdir errors propagate with their real cause.
+    await fsx.mkdir(path.dirname(configPath));
   }
 
   const nextServers: Record<string, unknown> = { ...(existingServers as object) };
@@ -459,13 +461,24 @@ async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
   try {
     await fsx.rename(tmpPath, configPath);
   } catch (renameErr) {
-    // Best-effort cleanup; if unlink itself throws (e.g. tmp file
-    // already gone), preserve the original rename error as the
-    // primary failure surface.
+    // Cleanup is mandatory — the temp file holds the cleartext API
+    // key. The `InitFs.unlink` seam contract already swallows ENOENT
+    // (idempotent), so any error reaching us here is a real cleanup
+    // failure that MUST surface to the operator. If unlink also
+    // fails, surface BOTH errors — the cleartext-key-on-disk
+    // outcome is worse than the rename failure alone, so we throw
+    // a combined message naming the leaked file path and attaching
+    // the rename error via Error.cause.
     try {
       await fsx.unlink(tmpPath);
-    } catch {
-      // ignore — the rename error below is what the user should see
+    } catch (unlinkErr) {
+      throw new Error(
+        `Atomic write to ${configPath} failed AND temp-file cleanup failed: ` +
+          `temp file ${tmpPath} may contain the cleartext SW4P_API_KEY. ` +
+          `Rename error: ${stringifyErr(renameErr)}. ` +
+          `Cleanup error: ${stringifyErr(unlinkErr)}.`,
+        { cause: renameErr },
+      );
     }
     throw renameErr;
   }
