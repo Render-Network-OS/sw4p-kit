@@ -28,7 +28,7 @@ describe("_platforms", () => {
   it("computes canonical config paths under the given home dir", () => {
     const byId = Object.fromEntries(PLATFORMS.map((p) => [p.id, p]));
     expect(byId["claude-code"]!.configPath(home, cwd)).toBe(
-      path.join(home, ".claude", "settings.json")
+      path.join(home, ".claude.json")
     );
     expect(byId["cursor"]!.configPath(home, cwd)).toBe(
       path.join(home, ".cursor", "mcp.json")
@@ -70,7 +70,7 @@ describe("_platforms", () => {
 
   it("detectPlatforms reports presence via the exists predicate", () => {
     const presentPaths = new Set([
-      path.join(home, ".claude", "settings.json"),
+      path.join(home, ".claude.json"),
       path.join(home, ".cursor", "mcp.json"),
     ]);
     const detected = detectPlatforms(home, cwd, (p) => presentPaths.has(p));

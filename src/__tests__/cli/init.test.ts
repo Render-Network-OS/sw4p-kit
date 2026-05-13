@@ -47,7 +47,7 @@ const FROZEN_TIME = new Date("2026-05-13T07:00:00.000Z");
 
 describe("runInit", () => {
   it("writes sw4p entry to Claude Code config when user consents", async () => {
-    const claudePath = path.join(home, ".claude", "settings.json");
+    const claudePath = path.join(home, ".claude.json");
     const fs = memFs({
       [claudePath]: JSON.stringify(
         {
@@ -103,7 +103,7 @@ describe("runInit", () => {
   });
 
   it("uses env-provided SW4P_API_KEY without re-prompting", async () => {
-    const claudePath = path.join(home, ".claude", "settings.json");
+    const claudePath = path.join(home, ".claude.json");
     const fs = memFs({
       [claudePath]: "{}",
     });
@@ -127,7 +127,7 @@ describe("runInit", () => {
   });
 
   it("makes no filesystem changes when user declines every platform", async () => {
-    const claudePath = path.join(home, ".claude", "settings.json");
+    const claudePath = path.join(home, ".claude.json");
     const cursorPath = path.join(home, ".cursor", "mcp.json");
     const fs = memFs({
       [claudePath]: "{}",
@@ -154,7 +154,7 @@ describe("runInit", () => {
   });
 
   it("refuses to overwrite existing sw4p entry without confirmation", async () => {
-    const claudePath = path.join(home, ".claude", "settings.json");
+    const claudePath = path.join(home, ".claude.json");
     const original = JSON.stringify(
       { mcpServers: { sw4p: { command: "node", args: ["old"], env: {} } } },
       null,
@@ -187,7 +187,7 @@ describe("runInit", () => {
   });
 
   it("replaces existing sw4p entry when user confirms", async () => {
-    const claudePath = path.join(home, ".claude", "settings.json");
+    const claudePath = path.join(home, ".claude.json");
     const fs = memFs({
       [claudePath]: JSON.stringify(
         { mcpServers: { sw4p: { command: "node", args: ["old"], env: {} } } },
@@ -255,7 +255,7 @@ describe("runInit", () => {
   });
 
   it("skips with a warning when the config file is not parseable JSON", async () => {
-    const claudePath = path.join(home, ".claude", "settings.json");
+    const claudePath = path.join(home, ".claude.json");
     const fs = memFs({ [claudePath]: "{this is not json" });
     const io = scriptedIO({
       answers: ["", "", ""],
@@ -278,7 +278,7 @@ describe("runInit", () => {
   });
 
   it("threads optional wallets through into the written entry", async () => {
-    const claudePath = path.join(home, ".claude", "settings.json");
+    const claudePath = path.join(home, ".claude.json");
     const fs = memFs({ [claudePath]: "{}" });
     const io = scriptedIO({
       answers: ["", "0xWALLET_BASE", "SOLWALLET"],

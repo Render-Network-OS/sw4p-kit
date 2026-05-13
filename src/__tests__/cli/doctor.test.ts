@@ -172,7 +172,7 @@ describe("runDoctor", () => {
 
   it("reports each detected platform's registration status", async () => {
     const io = recordingIO();
-    const claudePath = path.join(home, ".claude", "settings.json");
+    const claudePath = path.join(home, ".claude.json");
     const cursorPath = path.join(home, ".cursor", "mcp.json");
     const fs = memFs({
       [claudePath]: JSON.stringify({

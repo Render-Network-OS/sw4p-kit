@@ -40,7 +40,11 @@ export const PLATFORMS: readonly Platform[] = [
   {
     id: "claude-code",
     label: "Claude Code",
-    configPath: (home) => path.join(home, ".claude", "settings.json"),
+    // Claude Code reads MCP server registrations from ~/.claude.json (the
+    // top-level user config). Its settings live at ~/.claude/settings.json —
+    // do NOT confuse the two. Project-local registration via <cwd>/.mcp.json
+    // is handled separately in the init flow (not as a platform entry).
+    configPath: (home) => path.join(home, ".claude.json"),
     format: "json",
     mcpKey: "mcpServers",
   },
