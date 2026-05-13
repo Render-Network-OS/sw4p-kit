@@ -8,6 +8,7 @@
 import * as fs from "node:fs/promises";
 import * as fsSync from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 
 import {
   detectPlatforms,
@@ -18,6 +19,22 @@ import {
   type McpServerEntry,
 } from "./_platforms.js";
 import { realIO, type CliIO } from "./_io.js";
+
+/**
+ * Virtual platform descriptor for the project-local <cwd>/.mcp.json case.
+ * Not part of PLATFORMS — there's exactly one of these per `runInit` call,
+ * constructed from `cwd`. The shape mirrors a JSON-mutable platform so the
+ * same write helper (`writeJsonPlatform`) handles it uniformly.
+ */
+function projectLocalPlatform(projectMcpPath: string): Platform {
+  return {
+    id: "claude-code-project",
+    label: "Claude Code (project-local .mcp.json)",
+    configPath: () => projectMcpPath,
+    format: "json",
+    mcpKey: "mcpServers",
+  };
+}
 
 const HELP_TEXT = `sw4p-kit-init — interactive setup for the sw4p agent surface.
 
@@ -206,57 +223,95 @@ export async function runInit(opts: RunInitOptions): Promise<InitResult> {
   // Detect platforms
   const detected = detectPlatforms(home, cwd, fsx.exists);
   const present = detected.filter((d) => d.exists);
+  const actions: PlatformAction[] = [];
+
   if (present.length === 0) {
     io.print("\nNo supported agent platforms detected on this machine.");
     io.print("Paste the MCP entry below into your agent's MCP config manually:\n");
     io.print(renderJsonEntry(entry));
-    return { apiKey, network, detected, actions: [] };
+    // Fall through to project-local handling: --project should still work
+    // even when no other agent platform is installed.
+  } else {
+    io.print(`\nDetected ${present.length} platform(s):`);
+    for (const d of present) io.print(`  - ${d.platform.label}  (${d.configPath})`);
+
+    io.print(
+      "\nNote: @sw4p/kit is pre-publish. The args line below assumes the npm package is reachable; for a local install, set `command` to `node` and `args` to the absolute path of dist/mcp/bin.js."
+    );
+
+    for (const d of present) {
+      const proceed = await io.confirm(`Register sw4p in ${d.platform.label}?`, true);
+      if (!proceed) {
+        actions.push({
+          kind: "skipped",
+          platform: d.platform,
+          configPath: d.configPath,
+          reason: "user declined",
+        });
+        continue;
+      }
+      // Platforms whose config we don't safely mutate: print snippet, log
+      // manual action.
+      if (d.platform.format !== "json" || d.platform.mcpKey === undefined) {
+        io.print(`\n${d.platform.label}: ${d.platform.note ?? "manual paste required."}`);
+        io.print("MCP entry to paste:\n");
+        io.print(renderJsonEntry(entry));
+        actions.push({ kind: "manual", platform: d.platform, configPath: d.configPath });
+        continue;
+      }
+
+      // JSON path — load, validate, mutate, backup, write.
+      const result = await writeJsonPlatform({
+        d,
+        entry,
+        io,
+        fsx,
+        now,
+      });
+      actions.push(result);
+    }
   }
 
-  io.print(`\nDetected ${present.length} platform(s):`);
-  for (const d of present) io.print(`  - ${d.platform.label}  (${d.configPath})`);
+  // Project-local detection: Claude Code (and other team-shareable MCP setups)
+  // also read <cwd>/.mcp.json. Behavior:
+  //   --project        → always write (creating the file if absent).
+  //   --user-only      → never prompt, never write.
+  //   neither flag set → prompt only when .mcp.json already exists.
+  const projectMcpPath = path.join(cwd, ".mcp.json");
+  const projectFileExists = fsx.exists(projectMcpPath);
+  let writeProject = false;
+  if (flags.project) {
+    writeProject = true;
+  } else if (!flags.userOnly && projectFileExists) {
+    writeProject = await io.confirm(
+      `A project-local .mcp.json was detected at ${projectMcpPath}. Also register sw4p there?`,
+      true
+    );
+  }
 
-  io.print(
-    "\nNote: @sw4p/kit is pre-publish. The args line below assumes the npm package is reachable; for a local install, set `command` to `node` and `args` to the absolute path of dist/mcp/bin.js."
-  );
-
-  const actions: PlatformAction[] = [];
-
-  for (const d of present) {
-    const proceed = await io.confirm(`Register sw4p in ${d.platform.label}?`, true);
-    if (!proceed) {
-      actions.push({
-        kind: "skipped",
-        platform: d.platform,
-        configPath: d.configPath,
-        reason: "user declined",
-      });
-      continue;
-    }
-    // Platforms whose config we don't safely mutate: print snippet, log
-    // manual action.
-    if (d.platform.format !== "json" || d.platform.mcpKey === undefined) {
-      io.print(`\n${d.platform.label}: ${d.platform.note ?? "manual paste required."}`);
-      io.print("MCP entry to paste:\n");
-      io.print(renderJsonEntry(entry));
-      actions.push({ kind: "manual", platform: d.platform, configPath: d.configPath });
-      continue;
-    }
-
-    // JSON path — load, validate, mutate, backup, write.
-    const result = await writeJsonPlatform({
-      d,
+  if (writeProject) {
+    const projPlatform = projectLocalPlatform(projectMcpPath);
+    const projD: DetectedPlatform = {
+      platform: projPlatform,
+      configPath: projectMcpPath,
+      exists: projectFileExists,
+    };
+    const projResult = await writeJsonPlatform({
+      d: projD,
       entry,
       io,
       fsx,
       now,
+      allowCreate: true,
     });
-    actions.push(result);
+    actions.push(projResult);
   }
 
   // Closing summary
   io.print("\nDone.");
-  const wrote = actions.filter((a) => a.kind === "wrote" || a.kind === "replaced").length;
+  const wrote = actions.filter(
+    (a) => a.kind === "wrote" || a.kind === "replaced" || a.kind === "wrote-no-backup"
+  ).length;
   const manual = actions.filter((a) => a.kind === "manual").length;
   const skipped = actions.filter((a) => a.kind === "skipped").length;
   io.print(`Summary: ${wrote} written, ${manual} manual-paste, ${skipped} skipped.`);
@@ -270,10 +325,17 @@ interface WriteJsonOpts {
   io: CliIO;
   fsx: InitFs;
   now: () => Date;
+  /**
+   * When true (project-local create case), tolerate a missing file: write a
+   * fresh `{ mcpServers: { sw4p: entry } }` instead of refusing. Backup is
+   * skipped when there's nothing to back up; the action's `kind` becomes
+   * `"wrote-no-backup"`.
+   */
+  allowCreate?: boolean;
 }
 
 async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
-  const { d, entry, io, fsx, now } = opts;
+  const { d, entry, io, fsx, now, allowCreate = false } = opts;
   const { platform, configPath } = d;
   const mcpKey = platform.mcpKey;
   if (mcpKey === undefined) {
@@ -281,9 +343,11 @@ async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
     return { kind: "manual", platform, configPath };
   }
 
-  // Read existing JSON; if unreadable, refuse to mutate.
+  // Read existing JSON; if unreadable, refuse to mutate — UNLESS we're in
+  // allowCreate mode and the file simply isn't there yet.
   let parsed: Record<string, unknown> = {};
   let raw = "";
+  let fileExisted = true;
   try {
     raw = await fsx.readFile(configPath);
     parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -292,8 +356,14 @@ async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
       return { kind: "skipped", platform, configPath, reason: "config is not a JSON object" };
     }
   } catch (err) {
-    io.warn(`Refusing to write: cannot parse ${configPath} (${stringifyErr(err)}).`);
-    return { kind: "skipped", platform, configPath, reason: "config not parseable" };
+    if (allowCreate && !fsx.exists(configPath)) {
+      fileExisted = false;
+      parsed = {};
+      raw = "";
+    } else {
+      io.warn(`Refusing to write: cannot parse ${configPath} (${stringifyErr(err)}).`);
+      return { kind: "skipped", platform, configPath, reason: "config not parseable" };
+    }
   }
 
   const existingServers = (parsed[mcpKey] as Record<string, unknown> | undefined) ?? {};
@@ -318,13 +388,23 @@ async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
     replacing = true;
   }
 
-  // Backup
-  const backup = backupName(configPath, now());
-  try {
-    await fsx.copyFile(configPath, backup);
-  } catch (err) {
-    io.warn(`Could not write backup (${stringifyErr(err)}); aborting ${platform.label}.`);
-    return { kind: "skipped", platform, configPath, reason: "backup failed" };
+  // Backup — skip when the file didn't previously exist (nothing to back up).
+  let backup: string | undefined;
+  if (fileExisted) {
+    backup = backupName(configPath, now());
+    try {
+      await fsx.copyFile(configPath, backup);
+    } catch (err) {
+      io.warn(`Could not write backup (${stringifyErr(err)}); aborting ${platform.label}.`);
+      return { kind: "skipped", platform, configPath, reason: "backup failed" };
+    }
+  } else {
+    // Ensure parent directory exists for create-from-scratch case.
+    try {
+      await fsx.mkdir(path.dirname(configPath));
+    } catch {
+      /* mkdir is best-effort; node_fs uses recursive: true so existing dirs are fine */
+    }
   }
 
   const nextServers: Record<string, unknown> = { ...(existingServers as object) };
@@ -334,11 +414,18 @@ async function writeJsonPlatform(opts: WriteJsonOpts): Promise<PlatformAction> {
   const indent = inferIndent(raw);
   const next = JSON.stringify(parsed, null, indent) + (raw.endsWith("\n") ? "\n" : "");
   await fsx.writeFile(configPath, next);
-  io.print(`  ✓ ${platform.label}: wrote ${configPath} (backup: ${backup}).`);
+  if (backup) {
+    io.print(`  ✓ ${platform.label}: wrote ${configPath} (backup: ${backup}).`);
+  } else {
+    io.print(`  ✓ ${platform.label}: wrote ${configPath} (new file).`);
+  }
 
+  if (!fileExisted) {
+    return { kind: "wrote-no-backup", platform, configPath };
+  }
   return replacing
-    ? { kind: "replaced", platform, configPath, backup }
-    : { kind: "wrote", platform, configPath, backup };
+    ? { kind: "replaced", platform, configPath, backup: backup! }
+    : { kind: "wrote", platform, configPath, backup: backup! };
 }
 
 function renderJsonEntry(entry: McpServerEntry): string {

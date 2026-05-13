@@ -329,6 +329,138 @@ describe("runInit", () => {
     expect(all).toContain('"sw4p"');
   });
 
+  it("does not prompt or write project-local when no .mcp.json exists and no --project flag", async () => {
+    const claudePath = path.join(home, ".claude.json");
+    const projectPath = path.join(cwd, ".mcp.json");
+    const fs = memFs({ [claudePath]: '{"theme":"dark"}' });
+    // Single confirm: register sw4p in Claude Code = yes.
+    // No project-local prompt should fire, so we provide exactly one confirm.
+    const io = scriptedIO({
+      answers: ["", "", ""],
+      secrets: ["k_test"],
+      confirms: [true],
+    });
+
+    const result = await runInit({
+      io,
+      fs,
+      home,
+      cwd,
+      env: {},
+      args: [],
+      now: () => FROZEN_TIME,
+    });
+
+    expect(result.exitCode ?? 0).toBe(0);
+    // Claude Code config written.
+    expect(fs.files.has(claudePath)).toBe(true);
+    const final = JSON.parse(fs.files.get(claudePath)!) as Record<string, unknown>;
+    expect((final.mcpServers as Record<string, unknown>).sw4p).toBeDefined();
+    // Project-local NOT written.
+    expect(fs.files.has(projectPath)).toBe(false);
+    expect(result.actions.some((a) => a.platform.id === "claude-code-project")).toBe(false);
+  });
+
+  it("prompts for project-local when .mcp.json exists; user says yes -> both written", async () => {
+    const claudePath = path.join(home, ".claude.json");
+    const projectPath = path.join(cwd, ".mcp.json");
+    const fs = memFs({
+      [claudePath]: "{}",
+      [projectPath]: JSON.stringify(
+        { mcpServers: { other: { command: "foo", args: [], env: {} } } },
+        null,
+        2
+      ),
+    });
+    // Two confirms: yes Claude Code, yes project-local.
+    const io = scriptedIO({
+      answers: ["", "", ""],
+      secrets: ["k_test"],
+      confirms: [true, true],
+    });
+
+    const result = await runInit({
+      io,
+      fs,
+      home,
+      cwd,
+      env: {},
+      args: [],
+      now: () => FROZEN_TIME,
+    });
+
+    expect(result.exitCode ?? 0).toBe(0);
+    const projectConfig = JSON.parse(fs.files.get(projectPath)!) as Record<string, unknown>;
+    const servers = projectConfig.mcpServers as Record<string, unknown>;
+    expect(servers.sw4p).toBeDefined();
+    expect(servers.other).toBeDefined(); // preserved
+    // Backup written for project-local too.
+    expect(fs.copies.some(([from]) => from === projectPath)).toBe(true);
+    expect(result.actions.some((a) => a.platform.id === "claude-code-project" && a.kind === "wrote")).toBe(
+      true
+    );
+  });
+
+  it("--project flag forces project-local write even with no .mcp.json present", async () => {
+    const claudePath = path.join(home, ".claude.json");
+    const projectPath = path.join(cwd, ".mcp.json");
+    const fs = memFs({ [claudePath]: "{}" });
+    // Only one confirm: yes Claude Code. No project-local prompt because --project bypasses it.
+    const io = scriptedIO({
+      answers: ["", "", ""],
+      secrets: ["k_test"],
+      confirms: [true],
+    });
+
+    const result = await runInit({
+      io,
+      fs,
+      home,
+      cwd,
+      env: {},
+      args: ["--project"],
+      now: () => FROZEN_TIME,
+    });
+
+    expect(result.exitCode ?? 0).toBe(0);
+    expect(fs.files.has(projectPath)).toBe(true);
+    const projectConfig = JSON.parse(fs.files.get(projectPath)!) as Record<string, unknown>;
+    expect((projectConfig.mcpServers as Record<string, unknown>).sw4p).toBeDefined();
+    expect(result.actions.some((a) => a.platform.id === "claude-code-project")).toBe(true);
+  });
+
+  it("--user-only suppresses the project-local prompt even when .mcp.json exists", async () => {
+    const claudePath = path.join(home, ".claude.json");
+    const projectPath = path.join(cwd, ".mcp.json");
+    const original = '{"mcpServers":{"keep":{"command":"keep","args":[],"env":{}}}}';
+    const fs = memFs({
+      [claudePath]: "{}",
+      [projectPath]: original,
+    });
+    // Only one confirm: yes Claude Code. No project-local prompt because --user-only suppresses it.
+    const io = scriptedIO({
+      answers: ["", "", ""],
+      secrets: ["k_test"],
+      confirms: [true],
+    });
+
+    const result = await runInit({
+      io,
+      fs,
+      home,
+      cwd,
+      env: {},
+      args: ["--user-only"],
+      now: () => FROZEN_TIME,
+    });
+
+    expect(result.exitCode ?? 0).toBe(0);
+    // Project-local file untouched.
+    expect(fs.files.get(projectPath)).toBe(original);
+    expect(fs.copies.some(([from]) => from === projectPath)).toBe(false);
+    expect(result.actions.some((a) => a.platform.id === "claude-code-project")).toBe(false);
+  });
+
   it("rejects --project and --user-only together with a non-zero exit", async () => {
     const fs = memFs({});
     const io = scriptedIO({ answers: [], secrets: [], confirms: [] });
