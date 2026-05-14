@@ -27,6 +27,57 @@ git clone https://github.com/Render-Network-OS/sw4p-kit
 cd sw4p-kit && npm install && npm run build
 ```
 
+## Setup — `init` + `doctor`
+
+Two helper CLIs ship with the kit:
+
+```bash
+# Interactive setup — detects Claude Code / Cursor / Cline / Continue /
+# Goose / Codex / Aider / ElizaOS and writes the sw4p MCP entry into each
+# config you opt into. Prompts for SW4P_API_KEY and SW4P_NETWORK.
+npx @sw4p/kit init
+
+# Diagnostics — prints kit version, network reachability, API-key validity,
+# and per-platform sw4p registration status. Exits 0 on all-pass.
+npx @sw4p/kit doctor
+```
+
+Every JSON config the `init` flow touches is backed up first to
+`<config>.sw4p-kit-init-backup-<timestamp>` and the kit refuses to overwrite
+an existing `mcpServers["sw4p"]` entry without explicit confirmation. For
+platforms whose config is YAML/TOML/custom (Goose, Codex CLI, Continue,
+Aider, ElizaOS) the CLI prints a paste-ready snippet instead of mutating
+the file.
+
+### Claude Code: user-level vs project-local
+
+Claude Code reads MCP server registrations from two places:
+
+- **`~/.claude.json`** — your user-level config. `init` always writes here
+  when you opt into Claude Code (the default behavior).
+- **`<cwd>/.mcp.json`** — project-local, commit-able, team-shareable. `init`
+  offers to register here _only when_ `<cwd>/.mcp.json` already exists in
+  the directory you ran the command from, so the prompt stays quiet for
+  directories that aren't a project context.
+
+Two flags drive scripted use:
+
+- `--project` — force project-local registration regardless of whether
+  `<cwd>/.mcp.json` exists. Creates the file if absent.
+- `--user-only` — skip the project-local detection step even when
+  `<cwd>/.mcp.json` exists. Useful for CI runs that should never touch the
+  working directory.
+
+Passing both errors out with exit code 2 (mutually exclusive).
+
+> **Pre-publish:** until v1.0 ships on npm, invoke via
+> `node ./dist/cli/dispatch.js init` / `node ./dist/cli/dispatch.js doctor`
+> (or directly `node ./dist/cli/init.js` / `node ./dist/cli/doctor.js`).
+> Post-publish, `npx @sw4p/kit init` and `npx @sw4p/kit doctor` are the
+> canonical entry points.
+
+Get an API key: [console.sw4p.io](https://console.sw4p.io).
+
 ## Quickstart — MCP server
 
 ```bash
