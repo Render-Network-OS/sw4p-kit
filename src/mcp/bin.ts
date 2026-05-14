@@ -5,6 +5,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { createServer } from "./server.js";
 import { SettlementClient } from "../core/client.js";
 import { HmacSigner } from "../ap2/mandate.js";
+import { buildSdkClient } from "./_sdk-client.js";
 
 const SW4P_API_URL = process.env.SW4P_API_URL ?? "https://api.sw4p.io";
 const SW4P_API_KEY = process.env.SW4P_API_KEY;
@@ -23,38 +24,15 @@ if (SW4P_NETWORK !== "mainnet" && SW4P_NETWORK !== "testnet") {
   process.exit(1);
 }
 
-async function asJson<T>(r: Response): Promise<T> {
-  if (!r.ok) throw { status: r.status, body: await r.json().catch(() => ({})) };
-  return r.json() as Promise<T>;
-}
+const sdkClient = buildSdkClient({
+  apiUrl: SW4P_API_URL,
+  apiKey: SW4P_API_KEY,
+  network: SW4P_NETWORK,
+});
 
-const writeHeaders = {
-  "Content-Type": "application/json",
-  "X-API-Key": SW4P_API_KEY,
-  "X-SW4P-Network": SW4P_NETWORK,
-};
-
-const readHeaders = {
-  "X-API-Key": SW4P_API_KEY,
-  "X-SW4P-Network": SW4P_NETWORK,
-};
-
-const sdkClient = {
-  estimate: (p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/estimate`, { method: "POST", headers: writeHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ feeBps: number; route: string; outputAmount: string }>,
-  transfer: (p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/transfer`, { method: "POST", headers: writeHeaders, body: JSON.stringify(p) }).then(asJson) as Promise<{ intentId: string; status: string }>,
-  status: (id: string) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/status/${encodeURIComponent(id)}`, { headers: readHeaders }).then(asJson) as Promise<{ intentId: string; state: string }>,
-  getPortfolio: (addr: string) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/portfolio/${encodeURIComponent(addr)}`, { headers: readHeaders }).then(asJson),
-  planRebalance: (addr: string, p: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/rebalance/plan`, { method: "POST", headers: writeHeaders, body: JSON.stringify({ walletAddress: addr, ...(p as object) }) }).then(asJson),
-  executeRebalance: (plan: unknown) =>
-    fetch(`${SW4P_API_URL}/sdk/v1/rebalance/execute`, { method: "POST", headers: writeHeaders, body: JSON.stringify(plan) }).then(asJson),
-};
-
-const client = new SettlementClient({ sdk: sdkClient as never });
+// `SdkClient` and `SdkLike` are structurally identical (same six
+// methods, same signatures) — the assignment is type-safe with no cast.
+const client = new SettlementClient({ sdk: sdkClient });
 const signer = AP2_SIGNING_KEY ? new HmacSigner(AP2_SIGNING_KEY) : undefined;
 
 const defaultWallets: { base?: string; solana?: string } = {};
@@ -80,6 +58,14 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   })),
 }));
 
+// NOTE — error-surface asymmetry across transports: this stdio handler
+// lets tool errors propagate as transport-level JSON-RPC errors (the
+// MCP SDK converts thrown Errors to `-32000`). The Streamable HTTP
+// transport (`http.ts:135`) wraps the same call in a try/catch and
+// returns `{isError:true, content:[...]}` per the MCP `CallToolResult`
+// spec, because hosted-gateway agents need to render the error as a
+// tool result rather than a transport failure. If you build a third
+// transport, mirror http.ts's pattern.
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const result = await kit.callTool(req.params.name, req.params.arguments ?? {});
   return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };

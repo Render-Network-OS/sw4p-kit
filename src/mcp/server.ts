@@ -20,6 +20,19 @@ export interface ServerOptions {
   };
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
+  /**
+   * When set, the kit refuses any tool call that relies on cross-request
+   * task state (the in-memory `TaskStore`). Set this for stateless
+   * transports (e.g. the Streamable HTTP entrypoint) where each request
+   * builds a fresh kit, so a taskId returned on one request cannot be
+   * polled on the next.
+   *
+   * Affected tools:
+   *   - `sw4p.task` (always rejects when set)
+   *   - `sw4p.settle` with `async: true` (rejects; sync path still works)
+   *   - `sw4p.rebalance_execute` with `async: true` (rejects; sync path still works)
+   */
+  disableAsyncTasks?: boolean;
 }
 
 export interface FullToolContext {
@@ -32,6 +45,33 @@ export interface FullToolContext {
   };
   pollIntervalMs?: number;
   pollTimeoutMs?: number;
+  disableAsyncTasks?: boolean;
+}
+
+/**
+ * Build the canonical "this async-task workflow isn't available over the
+ * stateless HTTP transport" error message for a specific tool. Parameterized
+ * by tool name so the message accurately names what the caller invoked and
+ * recommends the correct synchronous substitute.
+ *
+ * Tests assert against `/stateless/i` so we keep "stateless" in the wording.
+ */
+export function statelessAsyncTasksError(
+  tool: "sw4p.task" | "sw4p.settle" | "sw4p.rebalance_execute",
+): string {
+  // For sw4p.task there is no synchronous substitute — the user wanted to
+  // poll an existing task handle and that requires the stdio transport.
+  // For sw4p.settle / sw4p.rebalance_execute the correct sync path is the
+  // SAME tool called WITHOUT `async: true` (which returns the settled
+  // intent directly instead of a task handle).
+  const syncSubstitute =
+    tool === "sw4p.task"
+      ? "use the stdio transport (sw4p-mcp) to poll task handles, or use sw4p.status if you already have an intentId"
+      : `call ${tool} without the \`async: true\` flag (returns the settled intent directly)`;
+  return (
+    `${tool} requires cross-request task state and is not available over ` +
+    `the stateless HTTP transport. ${syncSubstitute}.`
+  );
 }
 
 interface ToolDescriptor {
@@ -76,6 +116,7 @@ export function createServer(opts: ServerOptions) {
       if (opts.defaultWallets) ctx.defaultWallets = opts.defaultWallets;
       if (opts.pollIntervalMs !== undefined) ctx.pollIntervalMs = opts.pollIntervalMs;
       if (opts.pollTimeoutMs !== undefined) ctx.pollTimeoutMs = opts.pollTimeoutMs;
+      if (opts.disableAsyncTasks) ctx.disableAsyncTasks = true;
       return tool.handler(input, ctx);
     },
   };
