@@ -7,7 +7,7 @@ describe("end-to-end: Alice creator-payout via Cart Mandates", () => {
     const sdk = {
       estimate: vi.fn().mockImplementation(async () => ({
         feeBps: 50,
-        route: "cctp_v2",
+        route: "sw4p_settle",
         outputAmount: "2.00"
       })),
       transfer: vi.fn().mockImplementation(async () => {
@@ -43,7 +43,7 @@ describe("end-to-end: Alice creator-payout via Cart Mandates", () => {
         ttlSeconds: 600
       })) as ap2.CartMandate;
 
-      expect(cart.cart.route).toBe("cctp_v2");
+      expect(cart.cart.route).toBe("sw4p_settle");
       expect(cart.cart.feeBps).toBe(50);
       expect(cart.signature).toBeUndefined();
 

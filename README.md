@@ -6,7 +6,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A518-43853d.svg)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-69%2F69-3C8D0D.svg)](#tests)
+[![Tests](https://img.shields.io/badge/tests-91%2F91-3C8D0D.svg)](#tests)
+[![Deps](https://img.shields.io/badge/prod%20deps-2-3C8D0D.svg)](package.json)
 
 ---
 
@@ -29,7 +30,7 @@ cd sw4p-kit && npm install && npm run build
 ## Quickstart — MCP server
 
 ```bash
-SW4P_API_KEY=... node ./dist/mcp/bin.js
+SW4P_API_KEY=... SW4P_NETWORK=testnet node ./dist/mcp/bin.js
 ```
 
 Add to any MCP-capable client (Claude Code, Cursor, Continue, Zed, ElizaOS):
@@ -40,22 +41,61 @@ Add to any MCP-capable client (Claude Code, Cursor, Continue, Zed, ElizaOS):
     "sw4p": {
       "command": "node",
       "args": ["<abs-path>/sw4p-kit/dist/mcp/bin.js"],
-      "env": { "SW4P_API_KEY": "..." }
+      "env": {
+        "SW4P_API_KEY": "...",
+        "SW4P_NETWORK": "testnet",
+        "SW4P_USER_WALLET_BASE": "0x...",
+        "SW4P_USER_WALLET_SOLANA": "..."
+      }
     }
   }
 }
 ```
 
+`SW4P_NETWORK` selects `mainnet` or `testnet` (default `testnet`) and is sent as `X-SW4P-Network` on every API request. `SW4P_USER_WALLET_BASE` / `SW4P_USER_WALLET_SOLANA` are optional fallbacks used by `sw4p.balance` / `sw4p.send` when the agent doesn't pass `walletAddress` / `fromAddress` explicitly. The kit holds no private keys.
+
 Once `@sw4p/kit` publishes to npm, the install collapses to `npm install @sw4p/kit` and the `args` line becomes `["sw4p-mcp"]` (via `npx`).
 
-The agent now sees **9 tools**: `sw4p.estimate`, `sw4p.settle`, `sw4p.status`, `sw4p.portfolio`, `sw4p.rebalance_plan`, `sw4p.rebalance_execute`, `sw4p.task` (MCP 2025-11-25 async primitive), plus `sw4p.ap2.cart_propose` and `sw4p.ap2.cart_execute` when a signer is configured.
+The agent sees **9 tools** by default — the frontier agent surface (`sw4p.balance`, `sw4p.send`) plus the protocol surface (`sw4p.estimate`, `sw4p.settle`, `sw4p.status`, `sw4p.portfolio`, `sw4p.rebalance_plan`, `sw4p.rebalance_execute`, `sw4p.task` — the MCP 2025-11-25 async primitive). With an `AP2_SIGNING_KEY` set the count grows to 11 (adds `sw4p.ap2.cart_propose` and `sw4p.ap2.cart_execute`).
+
+### Streamable HTTP transport (hosted / remote agents)
+
+For hosted-gateway scenarios — where the kit runs behind an HTTPS endpoint instead of as a stdio child — boot the Streamable HTTP transport binary:
+
+```bash
+SW4P_API_KEY=... SW4P_MCP_HTTP_PORT=3939 node ./dist/mcp/http.js
+# → [sw4p-mcp-http] listening on http://0.0.0.0:3939
+```
+
+POST MCP JSON-RPC envelopes to `/mcp`; `GET /healthz` is a liveness probe. The same tool registry is served as stdio mode (9 tools by default, 11 with AP2). `SW4P_MCP_HTTP_PORT` defaults to `3939`.
+
+The HTTP transport accepts the API key two ways: from the `SW4P_API_KEY` env var at boot, or per-request via an `X-API-Key` header (header wins). This lets a gateway (e.g. `mcp.sw4p.io`) forward each caller's key on every request, so a single deployed kit serves many distinct callers without sharing credentials.
+
+```bash
+curl -sS -X POST http://127.0.0.1:3939/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'X-API-Key: sk_live_...' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+> **Async task workflows require stdio.** The Streamable HTTP transport is stateless — every request builds a fresh kit with its own `TaskStore`. Calls that depend on cross-request task state (`sw4p.settle({async: true})`, `sw4p.rebalance_execute({async: true})`, `sw4p.task`) are rejected with an actionable `isError` envelope pointing callers at the stdio transport (`sw4p-mcp`). The synchronous paths of `sw4p.settle` and `sw4p.rebalance_execute` work as normal.
+
+### Frontier agent surface
+
+| Tool | What it does |
+|---|---|
+| `sw4p.balance` | One-shot USDC balance across every supported chain. Pass `walletAddress` for a single wallet, or rely on the configured defaults. |
+| `sw4p.send` | Sign-and-go USDC transfer to any supported address (EVM or Solana). The protocol picks the route, signs, settles, and reports when funds arrive at the destination. |
+
+Everything else — rail selection, attestation, gas abstraction, recovery — happens server-side in the sw4p settlement engine. The kit is a thin client: **2 production deps**, zero chain SDKs, zero secrets.
 
 ## Sub-modules
 
 | Import | What it does |
 |---|---|
 | `@sw4p/kit/core` | `SettlementClient`, gas-abstraction helper (Token-2022 + signer types + policy hooks), error taxonomy, canonical `Intent`, `TaskStore` |
-| `@sw4p/kit/mcp` | MCP **2025-11-25** server — 9 tools, Tasks primitive for long-running settlement, stdio + Streamable HTTP |
+| `@sw4p/kit/mcp` | MCP **2025-11-25** server — agent surface + protocol surface (9 tools without a signer, 11 with AP2), Tasks primitive for long-running settlement, stdio + Streamable HTTP |
 | `@sw4p/kit/x402` | x402 **V2** middleware (multi-network `accepts`), Discovery handler for Bazaar/x402scan, pay-then-retry client |
 | `@sw4p/kit/a2a` | A2A `PayRequest` / `PaySettled` / `PayFailed` types and handler |
 | `@sw4p/kit/ap2` | **AP2 Intent + Cart Mandates** with deep-canonical JSON signing — first OSS TS implementation |
@@ -101,15 +141,15 @@ console.log(result.intentId); // intent_xxx — settled
 ## Tests
 
 ```bash
-npm test         # 69 unit + e2e tests
+npm test             # 91 unit + e2e tests
 npm run test:smoke   # gated staging / mainnet canary
-npm run build    # TypeScript build
+npm run build        # TypeScript build
 ```
 
 All tests green:
 ```
- Test Files  21 passed (21)
-      Tests  69 passed (69)
+ Test Files  23 passed (23)
+      Tests  91 passed (91)
 ```
 
 ## Architecture

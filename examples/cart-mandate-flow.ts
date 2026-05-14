@@ -15,7 +15,7 @@ import { core, mcp, ap2 } from "../src/index.js";
 async function main() {
   // Mock sw4p SDK — replace with real fetch wrapper pointing at your sw4p backend
   const sdk = {
-    estimate: async () => ({ feeBps: 50, route: "cctp_v2", outputAmount: "1.99" }),
+    estimate: async () => ({ feeBps: 50, route: "sw4p_settle", outputAmount: "1.99" }),
     transfer: async () => ({ intentId: `intent_${Date.now().toString(36)}`, status: "submitted" }),
     status: async (id: string) => ({ intentId: id, state: "settled" }),
     getPortfolio: async () => ({ chains: [] }),

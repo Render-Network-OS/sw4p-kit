@@ -37,7 +37,8 @@
     }
   },
   "bin": {
-    "sw4p-mcp": "dist/mcp/bin.js"
+    "sw4p-mcp": "dist/mcp/bin.js",
+    "sw4p-mcp-http": "dist/mcp/http.js"
   },
   "files": [
     "dist",
@@ -53,10 +54,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@solana/spl-token": "^0.4.14",
-    "@solana/web3.js": "^1.98.4",
-    "bs58": "^6.0.0",
-    "ethers": "^6.16.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
@@ -85,9 +82,6 @@
     "ap2",
     "a2a",
     "erc-7683",
-    "cctp",
-    "kora",
-    "solana",
     "agent-payments",
     "stablecoin"
   ]
