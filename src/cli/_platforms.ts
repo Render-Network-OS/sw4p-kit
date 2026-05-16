@@ -128,6 +128,28 @@ export const PLATFORMS: readonly Platform[] = [
     mcpKey: undefined,
     note: "ElizaOS surfaces MCP via per-character plugin lists; the path varies by repo layout. We print the plugin block; add it to your character JSON.",
   },
+  {
+    id: "hermes",
+    label: "Hermes",
+    // Hermes' canonical config location is at ~/.hermes/config.json. We do
+    // not mutate it automatically because Hermes' MCP config shape is still
+    // firming up; printed instructions are stable and safe.
+    configPath: (home) => path.join(home, ".hermes", "config.json"),
+    format: "manual",
+    mcpKey: undefined,
+    note: "Hermes' MCP block lives under `mcpServers` in ~/.hermes/config.json. The kit prints a JSON snippet for paste-in; auto-mutation will land once the config shape is locked.",
+  },
+  {
+    id: "openclaw",
+    label: "Open Claw",
+    // Open Claw is a project-local agent harness: ~/.openclaw/ for user
+    // settings, .openclaw/ in the project for per-repo MCP servers. We probe
+    // the project-local path because that is where MCP servers actually run.
+    configPath: (_home, cwd) => path.join(cwd, ".openclaw", "mcp.json"),
+    format: "manual",
+    mcpKey: undefined,
+    note: "Open Claw reads project-local MCP servers from .openclaw/mcp.json. The kit prints the canonical entry; paste it into that file (or create the file if missing).",
+  },
 ] as const;
 
 export interface DetectedPlatform {

@@ -2,7 +2,7 @@
 
 **The agent surface for sw4p — internet-native settlement, agent-native.**
 
-`@sw4p/kit` lets any agent — Claude, Cursor, Eliza, Continue, your stack — settle cross-chain through [sw4p](https://sw4p.io) over every open agent payment standard: **MCP**, **x402 V2**, **AP2 Cart Mandates**, **A2A**, and **ERC-7683 intents**. Native USDC settlement, universal gas abstraction (pay gas in the asset you're moving — no chain-native tokens), backed by the sw4p settlement engine.
+`@sw4p/kit` lets any agent, Claude, Cursor, Eliza, Continue, Hermes, Open Claw, your stack, settle cross-chain through [sw4p](https://sw4p.io) over every open agent payment standard: **MCP**, **x402 V2**, **AP2 Cart Mandates**, **A2A**, and **ERC-7683 intents**. Native USDC settlement, universal gas abstraction (pay gas in the asset you're moving, no chain-native tokens), backed by the sw4p settlement engine.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A518-43853d.svg)](https://nodejs.org)
@@ -32,9 +32,10 @@ cd sw4p-kit && npm install && npm run build
 Two helper CLIs ship with the kit:
 
 ```bash
-# Interactive setup — detects Claude Code / Cursor / Cline / Continue /
-# Goose / Codex / Aider / ElizaOS and writes the sw4p MCP entry into each
-# config you opt into. Prompts for SW4P_API_KEY and SW4P_NETWORK.
+# Interactive setup: detects Claude Code / Cursor / Cline / Continue /
+# Goose / Codex / Aider / ElizaOS / Hermes / Open Claw and writes the
+# sw4p MCP entry into each config you opt into. Prompts for SW4P_API_KEY
+# and SW4P_NETWORK.
 npx @sw4p/kit init
 
 # Diagnostics — prints kit version, network reachability, API-key validity,
@@ -84,7 +85,7 @@ Get an API key: [console.sw4p.io](https://console.sw4p.io).
 SW4P_API_KEY=... SW4P_NETWORK=testnet node ./dist/mcp/bin.js
 ```
 
-Add to any MCP-capable client (Claude Code, Cursor, Continue, Zed, ElizaOS):
+Add to any MCP-capable client (Claude Code, Cursor, Continue, Zed, ElizaOS, Hermes, Open Claw):
 
 ```json
 {
@@ -206,7 +207,7 @@ All tests green:
 ## Architecture
 
 ```
-  Any agent (Claude / Cursor / Eliza / Continue / your stack)
+  Any agent (Claude / Cursor / Eliza / Continue / Hermes / Open Claw / your stack)
                   │
         MCP · x402 · A2A · AP2 · ERC-7683 intents
                   │

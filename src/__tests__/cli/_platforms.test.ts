@@ -22,6 +22,8 @@ describe("_platforms", () => {
       "cursor",
       "elizaos",
       "goose",
+      "hermes",
+      "openclaw",
     ]);
   });
 
@@ -48,11 +50,17 @@ describe("_platforms", () => {
     expect(byId["elizaos"]!.configPath(home, cwd)).toBe(
       path.join(cwd, "characters")
     );
+    expect(byId["hermes"]!.configPath(home, cwd)).toBe(
+      path.join(home, ".hermes", "config.json")
+    );
+    expect(byId["openclaw"]!.configPath(home, cwd)).toBe(
+      path.join(cwd, ".openclaw", "mcp.json")
+    );
   });
 
   it("marks platforms we can't auto-mutate as manual / undefined mcpKey", () => {
     const byId = Object.fromEntries(PLATFORMS.map((p) => [p.id, p]));
-    for (const id of ["continue", "goose", "codex", "aider", "elizaos"]) {
+    for (const id of ["continue", "goose", "codex", "aider", "elizaos", "hermes", "openclaw"]) {
       expect(byId[id]!.format).toBe("manual");
       expect(byId[id]!.mcpKey).toBeUndefined();
     }
