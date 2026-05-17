@@ -4,10 +4,11 @@
 
 `@sw4p/kit` lets any agent, Claude, Cursor, Eliza, Continue, Hermes, Open Claw, your stack, settle cross-chain through [sw4p](https://sw4p.io) over every open agent payment standard: **MCP**, **x402 V2**, **AP2 Cart Mandates**, **A2A**, and **ERC-7683 intents**. Native USDC settlement, universal gas abstraction (pay gas in the asset you're moving, no chain-native tokens), backed by the sw4p settlement engine.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A518-43853d.svg)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-91%2F91-3C8D0D.svg)](#tests)
-[![Deps](https://img.shields.io/badge/prod%20deps-2-3C8D0D.svg)](package.json)
+[![sw4p](https://img.shields.io/badge/sw4p-kit-0046A4)](https://sw4p.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-0046A4)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A518-0046A4)](https://nodejs.org)
+[![Tests](https://img.shields.io/badge/tests-91%2F91-3C8D0D)](https://sw4p.io/)
+[![Deps](https://img.shields.io/badge/prod%20deps-2-3C8D0D)](package.json)
 
 ---
 
