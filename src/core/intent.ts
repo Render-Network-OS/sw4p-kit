@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const ChainSchema = z.enum(["base", "arbitrum", "polygon", "avalanche", "solana"]);
+const ChainSchema = z.enum(["base", "arbitrum", "polygon", "avalanche", "solana", "tron"]);
 const AssetSchema = z.enum(["USDC", "USDT"]);
 
 const EndpointSchema = z.object({
@@ -15,7 +15,13 @@ const IntentSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d+)?$/, "amount must be a positive decimal"),
   ttlSeconds: z.number().int().min(30).max(86_400),
   recipientMemo: z.string().max(200).optional()
-});
+})
+  .refine(i => !(i.to.chain === "tron" && i.to.asset === "USDC"), {
+    message: "Tron USDC is not supported by Allbridge in the 2026-05-18 provider snapshot."
+  })
+  .refine(i => !(i.from.chain === "tron" && i.from.asset === "USDC"), {
+    message: "Tron USDC is not supported by Allbridge in the 2026-05-18 provider snapshot."
+  });
 
 export type Chain = z.infer<typeof ChainSchema>;
 export type Asset = z.infer<typeof AssetSchema>;
