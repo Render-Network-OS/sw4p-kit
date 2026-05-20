@@ -27,4 +27,16 @@ describe("canary authorization", () => {
   it("rejects non-decimal amount", () => {
     expect(() => parseCanaryAuthorization({ ...valid, amount_decimal: "abc" })).toThrow();
   });
+
+  it("rejects a non-ISO-8601 expires_at after T6.7 tightening", () => {
+    expect(() =>
+      parseCanaryAuthorization({ ...valid, expires_at: "tomorrow at noon" }),
+    ).toThrow();
+  });
+
+  it("accepts an ISO-8601 expires_at with milliseconds and offset", () => {
+    expect(() =>
+      parseCanaryAuthorization({ ...valid, expires_at: "2026-05-19T12:00:00.123Z" }),
+    ).not.toThrow();
+  });
 });
